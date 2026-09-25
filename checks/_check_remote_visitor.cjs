@@ -78,7 +78,11 @@ if (!REMOTE) {
 
 /** 在一个目录里跑访客第一步，返回通过数 */
 const visitorRun = (dir) => {
-  const r = run(process.execPath, ['checks/_check_all.cjs', '--fast', '--target', 'example/_target.json'], dir)
+  // ★ 用共享真源（第 56 轮：那份清单原来在这里与生成器里各写了一遍，被「重复清单」抓到）。
+  //   ⚠️ **别写 `catch { return [...] }` 那种 fallback** —— 那**又把清单写了一遍**，
+  //     而「重复清单」检查会（也应该）当场抓到。同目录的 `require` 不会失败；
+  //     真失败了也该**当场报错**，而不是悄悄用一份可能过期的副本。
+  const r = run(process.execPath, require('./_paths.cjs').VISITOR_CMD, dir)
   const m = r.out.match(/通过\s*(\d+)\s*\/\s*(\d+)/)
   return { code: r.code, pass: m ? Number(m[1]) : null, total: m ? Number(m[2]) : null, out: r.out }
 }
