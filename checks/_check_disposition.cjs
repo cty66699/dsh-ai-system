@@ -74,9 +74,15 @@ for (const t of man.tracks || []) {
 
 // ── 覆盖检查：每个报告文件都必须有处置落点或书面豁免（禁止静默）──────────
 const declared = new Set()
-for (const t of man.tracks || []) { declared.add(t.source); if (t.ledger) declared.add(t.ledger) }
-for (const f of man.ledgerOnly || []) declared.add(f)
-const exempt = new Map((man.exempt || []).map(e => [e.file, e.reason]))
+// ★ 2026-09-26 修：**分隔符归一化**。
+//   原来只做 `declared.add(t.source)`，而下面算出的 `rel` 是 `path.relative(...)` 的结果 ——
+//   在 Windows 上是**反斜杠**（`docs/核验报告.md`），于是清单里写正斜杠（`docs/核验报告.md`）
+//   会被判成"孤儿报告"：**同一个文件，一处说它是源头、一处说它是孤儿**。
+//   清单是**跨平台的数据文件**，不该逼作者写死某一种分隔符 ⇒ 两边都归一成 `/` 再比。
+const norm = (s) => String(s || '').replace(/\\/g, '/')
+for (const t of man.tracks || []) { declared.add(norm(t.source)); if (t.ledger) declared.add(norm(t.ledger)) }
+for (const f of man.ledgerOnly || []) declared.add(norm(f))
+const exempt = new Map((man.exempt || []).map(e => [norm(e.file), e.reason]))
 
 // ★ 2026-09-25 修（GPT-6 第二轮实测）：`exempt` 缺 `reason` 也能通过 —— 而本文件自己的
 //   `_纪律` 写着「**禁止静默豁免**」。原来 `reason` 被存进 Map 却**从没被检查过**，
@@ -97,7 +103,7 @@ for (const dir of scanDirs) {
   if (!fs.existsSync(dir)) continue
   for (const f of fs.readdirSync(dir)) {
     if (!f.endsWith('.md')) continue
-    const rel = path.relative(BASE, path.join(dir, f))
+    const rel = norm(path.relative(BASE, path.join(dir, f)))
     if (declared.has(rel) || exempt.has(rel)) continue
     orphans.push(rel)
   }

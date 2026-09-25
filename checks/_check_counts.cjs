@@ -29,7 +29,12 @@ console.log('状态'.padEnd(16) + '标称'.padStart(6) + '实际'.padStart(6) + 
 for (const r of rows) {
   // 只数「编号列表本身」：先剥掉括号里的补充说明，否则描述中提到的编号（如「与 F-11 绑定」）会被误计。
   const bare = r.body.replace(/（[^）]*）/g, '').replace(/\([^)]*\)/g, '')
-  const ids = bare.match(/F-\d+(?:②)?/g) || []
+  // ★ 2026-09-26 修：原来**硬编码** /F-\d+/，于是只认作者自己那套编号 ——
+  //   公开仓的示例用 R-1/R-2（核验报告给的编号），到这里**解析出 0 条**，
+  //   报的却是"未在收敛账小节里解析到任何行"，**看起来像文档格式错，实际是脚本认死了前缀**。
+  //   同族的 _check_disposition.cjs 早就做对了：编号规则由每条轨道的 idPattern 声明。
+  //   ⇒ 改成接受**通用的「大写字母 + 连字符 + 数字」编号**（1-3 个字母），圈号后缀照旧兼容。
+  const ids = bare.match(/[A-Z]{1,3}-\d+(?:[①②③④⑤⑥⑦⑧⑨⑩])?/g) || []
   const actual = ids.length
   const dup = ids.length !== new Set(ids).size ? ' ⚠️有重复编号' : ''
   const ok = actual === r.declared

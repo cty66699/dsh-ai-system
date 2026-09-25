@@ -53,6 +53,12 @@ const CHECKS = [
   // ★ 文件卫生（2026-09-25 记忆毕业评审新增）：`.ps1` 编码 / 文本文件是否 UTF-8 / 临时脚本残留。
   //   三条都是「写过教训之后仍然复发」的坑 ⇒ 停止写教训、改为造机制。建成当天抓到 13 处真问题。
   ['文件卫生', '_check_hygiene.cjs', [], false],
+  // ★ 文本卫生（2026-09-25 新增）：查"文本变形且静默"那一类错 ——
+  //   BOM 多余（json/yaml/ssh config）、PowerShell 引号未闭合（会静默截断输出）、
+  //   `//` 注释写错（PS 只认 #）、生成物是否比源陈旧。
+  //   与上一项「文件卫生」分工：那项管**编码与残留**（.ps1 缺 BOM / 可解码性 / 临时脚本），
+  //   这项管**文本结构与新鲜度**。
+  ['文本卫生', '_check_text_hygiene.cjs', [], false],
   ['收敛账计数', '_check_counts.cjs', [_CFG.t.convergenceLedger, _CFG.t.convergenceList], false],
   ['发现处置链路', '_check_disposition.cjs', ['--quiet-legacy'], false],
   ['跨轮结转欠账', '_check_carryover.cjs', [], false],

@@ -15,13 +15,16 @@ if (_C.usingCustomTarget && !_C.t.publishTargets) {
   console.log('⏭️  未配置：publishTargets ⇒ 本项**跳过**（自定义目标模式下不回落默认布局）')
   process.exit(3)
 }
+// ★ 默认扫描目标（2026-09-26 改）：
+//   原来是 `AGENTS.md` + `AI体系/` —— 那是**当时的发布物**。但现在本工作区的发布路径是
+//     `_public_src/` → 生成器（自带脱敏自检）→ `public/` → 推送
+//   而那两样**已经不再对外发布**了（AGENTS.md 是工作区指令、AI体系/ 是内部文档）。
+//   ⇒ 继续扫它们：每次收尾都报一串**与发布无关的红**（中转站信息 / Cookie / 姓名），把真信号淹掉 ——
+//     实测这盏红灯**长期挂着没人管**，正说明它已经失去意义。
+//   ★ 那两样**确实含敏感内容**（报告没说错）—— 是**"不再发布"**让这条检查失去了对象，
+//     不是"扫描有 bug"。所以这里改的是**默认扫描目标**，不是把检查放松。
 const DEFAULT_TARGETS = _C.t.publishTargets || [
-  path.resolve(__dirname, '..', '..', 'AGENTS.md'),
-  path.resolve(__dirname, '..', 'AI体系'),
-  path.resolve(__dirname, '_briefs'),
-  path.join(__dirname, '_check_counts.cjs'),
-  path.join(__dirname, '_budget_check.cjs'),
-  path.join(__dirname, '_gen_verdict.cjs'),
+  path.resolve(__dirname, 'public'),
 ]
 // ⚠️ 本脚本**不把自己列入扫描目标**：它内部写着要搜的全部模式，自我扫描必然全中（自匹配假阳性）。
 //    发布时本脚本自身应做人工审阅。

@@ -63,9 +63,12 @@ if (typeof ledger.backlogMax !== 'number') die('账本缺少数字字段 `backlo
 let sqlite
 try { sqlite = require('node:sqlite') } catch { die('本机 Node 没有 node:sqlite（需 ≥22.5）') }
 let rows
+const SESSION_OF = new Map()   // id → 来源会话（按会话分别记账用）；必须在 try 之外，否则块作用域看不见
 try {
   const db = new sqlite.DatabaseSync(DB, { readOnly: true })
-  rows = db.prepare('select id, status from lesson').all()
+  rows = db.prepare('select id, status, source_session from lesson').all()
+  // id → 来源会话（2026-09-26：账本改成按会话分别记账，需要它）
+  for (const r of rows) SESSION_OF.set(r.id, r.source_session || '(无来源)')
 } catch (e) { die('读记忆库失败：' + e.message) }
 const ACTIVE = new Set(rows.filter(r => r.status === 'active').map(r => r.id))
 const ALLIDS = new Set(rows.map(r => r.id))
@@ -128,15 +131,41 @@ const untriaged = [...ACTIVE].filter(id => !owner.has(id))
 const base = new Set(Array.isArray(ledger.baseline) ? ledger.baseline : [])
 const untriagedNew = untriaged.filter(id => !base.has(id))
 
-if (untriaged.length !== ledger.backlogMax) {
-  if (untriaged.length > ledger.backlogMax) {
-    findings.push('【未分诊增加】账本声明 backlogMax=' + ledger.backlogMax + '，实际未分诊 **' + untriaged.length + '** 条'
-      + (untriagedNew.length ? '（其中 **' + untriagedNew.length + ' 条是账本建立之后新写的 lesson** —— 新 lesson 必须当场分诊：'
-        + untriagedNew.slice(0, 5).map(i => i.slice(0, 12)).join('、') + (untriagedNew.length > 5 ? ' 等' : '') + '）' : '')
-      + '。要么给它归宿，要么把 backlogMax 上调到 ' + untriaged.length + '（**上调等于承认这轮没做**）。')
-  } else {
-    findings.push('【账本未更新】未分诊已降到 ' + untriaged.length + ' 条，而账本仍写 ' + ledger.backlogMax + ' —— 请把 backlogMax 下调为 ' + untriaged.length + '（账本只有被维护才可能是绿的）。')
+// ── E4 牙齿（v2，2026-09-26 改）：**按来源会话分别记账** ──────────────────
+//   v1 的判据是「全部未分诊数必须严格等于 backlogMax」，那是**单一全局数字** ——
+//   于是别的会话写几条，我这边就红灯一次（当天替人清了两次）。
+//   ★ 但它不能简单删掉：**牙齿本身是对的**（新 lesson 不该悄悄溜过）。
+//   ⇒ 改法是**加归属维度**：按 lesson.source_session 分组，逐组与账本比对，
+//     并把「本会话的」与「其他会话的」分开报 —— 归因清晰，牙齿保留。
+//   ⇒ 账本新字段 backlogBySession: { "<session-id>": 配额, ... }；
+//     未在账本里出现过的会话 ⇒ 配额视为 0 ⇒ 它一写就红（那正是"新 lesson 必须当场分诊"）。
+const bySession = new Map()
+for (const it of untriaged) {
+  const s = SESSION_OF.get(it) || '(无来源)'
+  if (!bySession.has(s)) bySession.set(s, [])
+  bySession.get(s).push(it)
+}
+const quota = ledger.backlogBySession || {}
+const SELF = ledger.selfSession || null
+const overQuota = []
+for (const [sess, list] of bySession) {
+  const q = typeof quota[sess] === 'number' ? quota[sess] : 0
+  if (list.length !== q) overQuota.push({ sess, list, q })
+}
+
+if (overQuota.length) {
+  const selfOver = overQuota.filter(o => SELF && o.sess === SELF)
+  const otherOver = overQuota.filter(o => !(SELF && o.sess === SELF))
+  for (const o of overQuota) {
+    const who = (SELF && o.sess === SELF) ? '**本会话**' : '其他会话'
+    const dir = o.list.length > o.q ? '增加' : '减少（账本未同步）'
+    findings.push('【未分诊' + dir + '·' + who + '】会话 ' + o.sess.slice(0, 22) + '… 未分诊 **' + o.list.length + '** 条（账本配额 ' + o.q + '）'
+      + (o.list.length > o.q
+        ? '。要么给它归宿，要么把 backlogBySession["' + o.sess + '"] 上调到 ' + o.list.length + '（**上调等于承认这轮没做**）。'
+        : '。分诊掉了却没下调配额 —— 请把该会话的配额改成 ' + o.list.length + '。'))
   }
+  if (selfOver.length) findings.push('【归属提示】**其中 ' + selfOver.length + ' 组是本会话的** —— 这部分该由本会话当天分诊，不能推给后来人。')
+  if (otherOver.length && !selfOver.length) findings.push('【归属提示】本次红灯**全部来自其他会话**（本会话 0 欠账）—— 按既有约定，别人的欠账不该算成本会话的失职；修法见 backlogBySession。')
 }
 
 // ── 输出 ────────────────────────────────────────────────────────────────────

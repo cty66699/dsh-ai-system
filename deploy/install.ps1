@@ -332,7 +332,10 @@ if ($DryRun) {
     $want = @($targets.Keys)
     $missing = @($want | Where-Object { $_ -notin $inBundles })
     if ($missing.Count) {
-      Warn ("装了但没进 bundles（等于没启用）：" + ($missing -join '、'))
+      # ★ 2026-09-26 改 Warn → Problem：**"装了但没启用"是体系不完整，不是提醒。**
+      #   原实现只 Warn，而 Warn **不进 $script:Problems** ⇒ 最终仍 exit 0 报"安装流程走完" ——
+      #   这正是核验方抓到的那个模式：「**所有真话都说完之后，exit 0 撒了谎**」。
+      Problem ("装了但没进 bundles（等于没启用）：" + ($missing -join '、'))
       Say "   ==> 多半是 pnpm 的 build script 拦截 —— 找上面 [ERR_PNPM_IGNORED_BUILDS] 那几行"
       Say "   ==> 手动补救：在 $wsFile 里把 allowBuilds 的占位符填成 true，再重跑本次安装"
     } else {
@@ -341,8 +344,11 @@ if ($DryRun) {
   } else { Warn "读不到 profile 的 package.json" }
 }
 if ($failed.Count) {
-  Warn ("这些命令没成功：" + ($failed -join '、'))
-  Say "   ==> 插件是别人的包，会变；装不上不影响主体可用。记下名字，回头单独试。"
+  # ★ 2026-09-26 改 Warn → Problem：同样的理由 —— 装不上就是**少一个功能**，
+  #   退出码必须诚实（不能说"走完了"却又少东西）。说明保留，供使用者判断严重性。
+  Problem ("这些命令没成功：" + ($failed -join '、'))
+  Say "   ==> 插件是别人的包，会变；少一个插件通常不影响主体可用 —— 但**它是真的没装上**，"
+  Say "       所以本次会以非 0 退出码结束。记下名字，回头单独试。"
 }
 
 Step 8 "落一份工作区指令模板（可选启用）"
@@ -395,7 +401,9 @@ Step 10 "起服务验证（唯一能发现「装了但一半插件不工作」�
 #   的子插件是适配旧宿主线的，需要 pnpm-workspace.yaml 里的 overrides 顶到适配版本。
 #   ⇒ 只看"装上了"会交付一个**能启动、UI 残缺**的半成品。
 if ($DryRun) {
-  Say "   (dry-run) dsh --profile $ProfileName --port <空闲端口> --no-open   # 起一下、探活、看 failed to import"
+  Say "   (dry-run) 起一次服务、探活、看有没有 failed to import"
+Say "             —— 端口由脚本自己挑一个没被占用的；上面这行**不是可复制的命令**"
+Say "                （原实现写成 `--port <空闲端口>`，那个尖括号是字面量，照抄会报错）"
 } elseif ($SkipBootVerify -or $NoBoot) {
   Warn "跳过了起服务验证（-SkipBootVerify / -NoBoot）"
   Say "   ==> 提醒：跳过它就无法发现「装了但插件没加载」的情况。"
