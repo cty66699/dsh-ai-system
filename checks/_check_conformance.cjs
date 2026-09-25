@@ -192,7 +192,14 @@ for (const it of items) {
   const specs = Array.isArray(spec) ? spec : [spec]
   let hits = 0, absent = false
   for (const s of specs) {
-    const n = (tgt.match(new RegExp(s, 'gi')) || []).length
+      // ★★ 2026-09-26 加（独立核验 F-9 —— 一个假绿）：映射值是空字符串时，检查词会匹配一切
+      //   （new RegExp 空串 对任何文本都命中）⇒ 报「✅ 落实（提及 47 次）」，而那个词根本不存在。
+      //   本脚本自己的风险检查（/^[A-Za-z0-9]{2,6}$/）恰好把空串排除在外 ⇒ 从不报警。
+      if (!s || !String(s).trim()) {
+        findings.push(`【空检查词】${name} 的映射值是空的 —— 一个空检查词永远「落实」，这不是通过。`)
+        continue
+      }
+      const n = (tgt.match(new RegExp(s, 'gi')) || []).length
     if (n === 0) { absent = true; break }
     hits += n
   }

@@ -5,28 +5,25 @@
     "**条目内的相对路径以本文件所在目录为基准。**",
     "**扫了个空 ≠ 干净**：扫描类脚本对 0 个文件判**失败**。"
   ],
-
   "declaration": "目标声明.md",
   "product": "成品.md",
   "conformanceMap": "符合性映射.json",
-
   "dispositionManifest": "处置清单.json",
   "dispositionScanDirs": ["."],
-
   "carryover": "结转账.json",
   "repoRoot": "..",
   "verifyBase": ".",
-
   "_scanDirsNote": "★ 2026-09-25 修（Kimi 第二轮 B4）：原来只写 [\".\"] ⇒ **`docs/` 从来没被引用检查扫过**，于是那里面 5 处死引用（指向内部名/不存在的文件）一直没人发现。扫描范围必须覆盖**所有会被读者读的目录**，不能只覆盖示例。",
-  "scanDirs": [".", "../docs"],
+  "scanDirs": [".","../docs"],
+  "textHygieneRoots": [".","../docs"],
+  "_syntaxRootsNote": "★ 2026-09-26 加（`../deploy` 而不是 `deploy` —— **相对路径以本文件所在目录为基准**，写到 example/deploy 会「扫描根不存在」）：此前**没配它** ⇒ 两道语法门（语法门 / PS 语法门）在示例工程里**从来没真跑过** —— 那是个覆盖缺口。现在配上，示例就能演练到它们（本仓库自带 checks/*.cjs 与 deploy/install.ps1）。",
+  "syntaxRoots": ["../checks","../deploy"],
   "publishTargets": [".."],
-
   "_docs": "指向**生成的脱敏公开文档集**（见 脱敏生成器）。register（07 登记册）**不在已确认的开源范围内**，故不配 ⇒ 该项只跳过登记册那一个子检查，其余照跑。",
   "agentsDoc": "../docs/路由策略示例.md",
   "flowDoc": "../docs/派发流程.md",
   "capabilityFile": "../docs/核验者能力档案.md",
-  "_guide": "★ 这里**刻意不配** `guide`。它原指向一份**整篇不在开源范围内**的内部文档（内容以「我的项目缺什么」为主，逐词打码只会打出半成品），而生成器只会改写它的路径前缀、**不会检查目标是否存在于公开集** ⇒ 结果就是在对外配置里留一条**死引用**（2026-09-25 由两个模型访客测试发现）。未配置 ⇒ 只跳过 guide 这一个子检查，其余照跑。**宁可不配，也别留一个指向不存在文件的路径。**",
-
+  "_guide": "★ 2026-09-26 更正（独立核验实测指出原注释与事实相反）：缺 guide ⇒ 「文档漂移」**整项跳过** —— 不是\"只跳过 guide 这一个子检查、其余照跑\"。它和 agentsDoc / flowDoc / capabilityFile 是同一组硬依赖，缺任一个整项都不跑。",
   "_budgetLedger": "设为 null ⇒ 跳过「预算闸门」（公开环境没有本机账本；不设则会去读运行者自己的账本）",
   "budgetLedger": null
 }

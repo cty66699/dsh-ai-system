@@ -97,12 +97,31 @@ if (cfgPath) cfgPath = path.resolve(cfgPath)
       capabilityFile: R(t.capabilityFile, P('方案设计', 'AI体系', '06_核验者能力档案.md')),
       convergenceLedger: R(t.convergenceLedger, P('方案设计', '核查', '_briefs', '裁定记录_框架漏洞审查.md')),
       convergenceList: R(t.convergenceList, P('方案设计', '核查', '_briefs', '_框架审查清单_Kimi.md')),
+      // ★★ 2026-09-26 加（给 `_check_placeholders.cjs` 的**文件级豁免**用）：
+      //   本工作区里有两份**别的项目**的方案（`00_总览` 与 `02_任务二` = 桥检项目），
+      //   它们里面有一批**诚实的待办**（`⬜ 编号待核` / `未实测` / `待补（C-6 未结项）`）——
+      //   那是**如实标注"这里还没做完"**，不是"没做完却说做完了"。
+      //   ⇒ 那些待办**不属于「DSH 体系开源」这个交付**，所以在这里书面豁免，
+      //     **理由写在值里**（`_check_placeholders.cjs` 会把每条豁免连理由一起打印出来 —— 不打印就是静默豁免）。
+      //   ⚠️ 代价如实写在这里：**这两份文件的占位符从此不再被这项检查盯** ——
+      //     它们要交出去之前，得先把这个豁免删掉（或换成行内 `placeholders:ignore` 逐条标注）。
+      placeholderExempt: t.placeholderExempt || {
+        '00_总览与共性技术底座.md': '桥检项目的方案（另一交付）· 里面的 ⬜/待核实为如实标注的待办，不属本交付',
+        '02_任务二_（未发表项目）.md': '同上（13 处待办：编号待核 / 未实测 / 待补）',
+      },
       // ⚠️ 纪律：这几项**未配置时返回 null**，由各脚本沿用自己原有的默认值 ——
       //    不在这里另造一套默认，否则本地行为会被悄悄改掉（第一次写的时候就把 '方案设计' 按 HERE 解析错了）。
       scanDirs: t.scanDirs ? t.scanDirs.map(d => R(d, null)).filter(Boolean) : null,
       // 文件卫生断言（`_check_hygiene.cjs`）的扫描根。默认 = 仓库根（全量走，实测 6362 文件 / 0.6 秒）；
       //   自定义目标下未配置 ⇒ null ⇒ 该项**跳过**（宁可少跑，不许混跑）。
       hygieneRoots: t.hygieneRoots ? t.hygieneRoots.map(d => R(d, null)).filter(Boolean) : (custom ? null : [ROOT]),
+      // 内部默认根**收窄到本项目**（`方案设计`），不是整个工作区 ——
+  //   实测：设成 [ROOT] 会扫到工作区里**别的项目**（刷课项目的 `_（业务标识略）/`、`_research/` 里的实验文件），
+  //   报出一串与本次无关的 BOM 问题 ⇒ 把真信号淹掉（这正是"红得没根据"那一类）。
+  //   访客侧则由 `example/_target.json` 的 `textHygieneRoots` 显式给出。
+  textHygieneRoots: t.textHygieneRoots ? t.textHygieneRoots.map(d => R(d, null)).filter(Boolean) : (custom ? null : [P("方案设计")]),
+
+      // 文本卫生断言（`_check_text_hygiene.cjs`）的扫描根。**与 hygieneRoots 分开**：
       // 语法门（`_check_syntax.cjs`）的扫描根。默认只扫**我们自己的脚本层**（`方案设计\` 递归），
       //   另加仓库根一级目录下的脚本 —— 不扫各项目的浏览器页脚本/第三方 js（那是别人的产物，
       //   坏了也不该让本工作区的统一入口长期亮红灯）。自定义目标下未配置 ⇒ 跳过。
@@ -135,4 +154,18 @@ module.exports = {
     return c
   },
   HERE, ROOT, readText,
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // ★ 共享常量（2026-09-26，第 49 轮加）—— 治「列举会漂移」的**第 6 种形态**：
+  //   **同一份清单在几个地方各写了一遍。**
+  //   实测：`跳过目录` 与 `JS 扩展名` 这两份清单**各自在两个脚本里写了一遍** ——
+  //   它们**现在是一致的**，但**将来只改一处**时会出现「一处认、一处不认」的静默不一致。
+  //   ⇒ 抽到这里（`_paths.cjs` 已经是共享层，各脚本都 require 它）。
+  //   ⚠️ 修订规矩：**这两份清单以后只在这里改**；别处再写一份，`_check_duplicate_lists.cjs` 会报。
+  // ══════════════════════════════════════════════════════════════════════════════
+  // 扫脚本目录时**一律跳过**的目录名（`.pnpm` / `public` 是生成物或包缓存，扫它们没有意义还会很慢）。
+  SKIP_DIRS_SCRIPTS: ['node_modules', '.git', '.pnpm', 'public', 'sessions', 'cache', 'logs', 'attachments'],
+  // 「这是 JS 源码」的扩展名。语法门与文本卫生都按它挑文件 —— **两处必须一致**，否则会出现
+  // 「语法门查了、文本卫生没查」这一类覆盖缺口（而那正是"谁在看它"的问题）。
+  JS_EXT: ['.cjs', '.js', '.mjs'],
 }

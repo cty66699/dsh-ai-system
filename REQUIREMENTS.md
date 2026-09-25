@@ -1,7 +1,7 @@
 # 运行要求（电脑端）
 
 > **一句话**：**一台能跑 Node 22 的普通 Windows 电脑就够。**
-> 它**不吃 GPU、不吃多核、不吃大内存** —— 真正的门槛是**磁盘（约 1.8 GB）**和**能连上 npm**，**不是硬件性能**。
+> 它**不吃 GPU、不吃多核、不吃大内存** —— 真正的门槛是**磁盘（约 2.6 GB）**和**能连上 npm**，**不是硬件性能**。
 >
 > ★ 下表里每个数字都是**实测**出来的（作者在 Windows 11 + Node 22.22.2 上跑出来的读数），不是估的。
 
@@ -17,7 +17,7 @@
 | **npm** | 在 PATH 里 | 装 Node 时勾选「加入 PATH」 |
 | **pnpm** | 已装，**或**让 `corepack` 启用 | 部署脚本会**自动尝试** `corepack enable pnpm`；失败会明确告诉你 `npm i -g pnpm` |
 | **网络** | **能连到 npm registry** | 装插件要**下载**。实测网络抖动会让个别插件失败 —— 但那**不是脚本的问题**，脚本会明确报出是哪个、并以退出码 2 结束 |
-| **磁盘** | **约 1.8 GB 可用空间** | DSH 本体 **462 MB** + profile **365 MB** + pnpm 共享缓存 **945 MB** |
+| **磁盘** | **约 2.6 GB 可用空间** | 全局安装（DSH 本体）**0.37 GB** + `DSH_HOME`（含 profile 与旁路安装）**1.34 GB** + pnpm 共享缓存 **0.92 GB** ＝ **约 2.6 GB**（下面那段脚本在本机实测的读数）。<br>★ **这几个数会随版本与插件变**（实测：作者 2026-09-25 升级到 0.1.7 那一次，profile 从 365 MB 涨到了 805 MB）。**⇒ 所以下面给了一段脚本，你可以在自己机器上量一遍。** |
 
 > **⚠️ 两个 Node 门槛别搞混**：本仓库里有**两样东西**，门槛不同 ——
 > · **断言层（`checks/`）**：≥ **22.5**（「记忆毕业」那一项用了 `node:sqlite`，实验特性）；
@@ -47,14 +47,54 @@
 
 ---
 
-## 四、这个数字是怎么测出来的（可复核）
+## 四、这个数字是怎么测出来的（**可以直接复制去复核**）
 
-| 读数 | 环境 | 方法 |
-|---|---|---|
-| 磁盘 1.8 GB | 全新影子 `DSH_HOME` + 全局安装 | `Get-ChildItem -Recurse \| Measure-Object Length -Sum` |
-| 内存 202 MB | 刚起服务、**只算目标实例** | 按端口找 LISTEN 属主 PID ⇒ 遍历 `Win32_Process` 收子孙 ⇒ `Measure-Object WorkingSet64 -Sum` |
-| 首页 67 ms | 同上 | `Measure-Command { Invoke-WebRequest }` |
+> **2026-09-26 改**：本节原来写的是"方法描述"（"按端口找属主 PID ⇒ 遍历 Win32_Process…"）——
+> **那读者还得自己写脚本，等于没给**。现在换成**可直接跑的命令**：**复制 → 粘贴 → 拿到数**。
+> **下面每条都注明了"要替换什么"**。
 
-> **一个测量上的坑（作者踩过）**：直接 `Get-Process node` 求和会**把别的 node 进程也算进去** ——
+### 磁盘占用
+
+```powershell
+# 把 <DSH_HOME> 换成你的（默认 %USERPROFILE%\.dsh）
+$h = "$env:USERPROFILE\.dsh"
+"DSH_HOME = " + [math]::Round((Get-ChildItem $h -Recurse -File -EA SilentlyContinue | Measure-Object Length -Sum).Sum / 1GB, 2) + " GB"
+"其中 profile = " + [math]::Round((Get-ChildItem "$h\profiles" -Recurse -File -EA SilentlyContinue | Measure-Object Length -Sum).Sum / 1GB, 2) + " GB"
+```
+
+### 内存 / 首页响应（**必须按端口定位属主，别按进程名**）
+
+> ⚠️ **先读这句：内存这个数会随运行时长涨，别拿一次读数当"它吃多少"。**
+> 上面表里写的 **202 MB 是"刚起服务"**；作者另一次在**跑了很久的实例**上实测是 **737 MB**。
+> **两个数都对，只是问的问题不同** —— 你要比的是**同一台机器上、同一状态下、改动前后**的差，
+> 而不是"我测出来为什么和文档不一样"。
+> **内存随会话长、插件多、上下文长而增长，这是正常的。**
+
+```powershell
+# 把 3080 换成你实例的端口
+$port = 3080
+$conn = Get-NetTCPConnection -LocalPort $port -State Listen -EA SilentlyContinue | Select-Object -First 1
+if (-not $conn) {
+  "该端口没有 LISTEN 进程 —— 服务没起，或换端口了"
+} else {
+  $owner = $conn.OwningProcess
+  # 只算属主 + 它的直接子进程（**不再递归遍历整棵树** —— 那一步在有些机器上会卡住，见下方说明）
+  $kids = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$owner" -EA SilentlyContinue | ForEach-Object { $_.ProcessId })
+  $ids = @($owner) + $kids | Sort-Object -Unique
+  $mem = (Get-Process -Id $ids -EA SilentlyContinue | Measure-Object WorkingSet64 -Sum).Sum
+  "实例内存 ≈ " + [math]::Round($mem / 1MB) + " MB（" + $ids.Count + " 个进程：属主 $owner + 子进程）"
+  $ms = (Measure-Command { try { Invoke-WebRequest "http://127.0.0.1:$port" -UseBasicParsing -TimeoutSec 5 -EA Stop | Out-Null } catch {} }).TotalMilliseconds
+  "首页响应 = " + [math]::Round($ms) + " ms（返回 401 也算通了 —— 那说明服务活着、只是没带 token）"
+}
+```
+
+> ⚠️ **上面那段我写成完整命令，是因为"按端口找属主"这一步最容易被简化成错的**：
+> 直接 `Get-Process node` 会把**别人的 node 进程**也算进去。
+
+> **一个测量上的坑（作者踩过，上面那段命令就是为了避开它）**：直接 `Get-Process node` 求和会**把别的 node 进程也算进去** ——
 > 作者第一次测得 911 MB，其实那一半是**他自己的生产实例**；按端口定位属主后真实值只有 **202 MB**。
 > ⇒ **测"这套东西吃多少资源"之前，先确认测量范围里没有别人的进程。**
+>
+> ⚠️ **上面那条命令我改过一次**（2026-09-26）：第一版**递归遍历整棵进程树**（`while` 循环里反复调 `Get-CimInstance`），
+> **实测在作者的机器上会卡住**（两分钟无输出）。写进文档的"可直接跑"命令，**必须真的跑过一遍** ——
+> 否则读者照抄就卡住，比不给命令更糟。现在只算**属主 + 直接子进程**：够用，且秒回。

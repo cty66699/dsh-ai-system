@@ -40,8 +40,9 @@ if (!ROOTS || !ROOTS.length) {
   process.exit(3)
 }
 
-const EXT = new Set(['.cjs', '.js', '.mjs'])
+const EXT = new Set(require('./_paths.cjs').JS_EXT)
 const SKIP = name => name.startsWith('.') || name === 'node_modules' || /^_归档_/.test(name)
+
 // ESM 特征：顶层 import/export，或 import.meta。命中就跳过（vm.Script 编译不了 module）。
 const ESM_RE = /^[ \t]*(?:import|export)\b/m
 
@@ -148,18 +149,35 @@ for (const r of ROOTS) {
   if (!fs.existsSync(r)) { console.error('❌ 结构性错误：扫描根不存在 —— ' + r); process.exit(2) }
   walk(r)
 }
-// 仓库根**一级目录**下的脚本也一并查（不递归 —— 各项目目录整棵树不在本项范围内）。
-try {
-  for (const e of fs.readdirSync(_CFG.ROOT, { withFileTypes: true })) {
-    if (e.isDirectory() || SKIP(e.name)) continue
-    if (EXT.has(path.extname(e.name).toLowerCase())) check(path.join(_CFG.ROOT, e.name))
-  }
-} catch { /* 忽略 */ }
+﻿// ★★ 2026-09-26 修（反例自检当场抓出的一处"修得不彻底"）：
+//   这一段是**硬编码的额外扫描根**（仓库根**一级目录**下的脚本），**不受 `syntaxRoots` 控制**。
+//   后果有两条：
+//     ① **在自定义目标模式下**，如果访客没配 `repoRoot`，`_CFG.ROOT` 会回落到断言层自己的仓库 ——
+//        于是"检查你自己的脚本"这件事，实际检查的是**别人的目录**（与 F-11 那一类同源）；
+//     ② 它让 `nScanned - nEsm === 0` 这条守卫**几乎不可能被触发** ——
+//        因为仓库根一级总有 `.cjs`，所以"实际编译了 0 个脚本"这个场景造不出来。
+//        ⇒ **反例自检加进这一条用例时，它当场报「没咬到」** —— 正是它在提醒上面②这件事。
+//   ⇒ 改成：**只有在配置里明确给了 `repoRoot` 时才扫它**（与其它门的"未配置不回落"一致）。
+if (_CFG && _CFG.t && _CFG.t.repoRoot) {
+  try {
+    for (const e of fs.readdirSync(_CFG.ROOT, { withFileTypes: true })) {
+      if (e.isDirectory() || SKIP(e.name)) continue
+      if (EXT.has(path.extname(e.name).toLowerCase())) check(path.join(_CFG.ROOT, e.name))
+    }
+  } catch { /* 忽略 */ }
+}
 
-if (nScanned === 0) { console.error('❌ 结构性错误：扫描到 0 个脚本 —— 扫描类检查必须断言集合非空。'); process.exit(2) }
+if (nScanned - nEsm === 0) {
+  // ★★ 2026-09-26 修（独立核验 F-8）：原来判 `nScanned === 0`，而 `nScanned++` **把 ESM 也算了进去**
+  //   ⇒ 一个**全是 ESM** 的扫描根 ⇒ 编译 0 个却 nScanned === 1 ⇒ 守卫失效 ⇒ 报「✅ 全部可编译」。
+  //   ⇒ 对现代全 ESM 工程，这道门等于不存在，而它显示通过。改成「真正编译过的」为 0 就判失败。
+  console.error('❌ 结构性错误：实际编译了 0 个脚本（扫描 ' + nScanned + ' 个，其中 ESM 跳过 ' + nEsm + ' 个）')
+  console.error('   ⇒ 扫描类检查必须断言集合非空；「全是 ESM」意味着这道门什么都没查。')
+  process.exit(2)
+}
 
 console.log('语法门 + 进程 I/O 门（我们自己的脚本必须能编译，且不踩管道捕获）')
-console.log('  扫描根：' + ROOTS.map(r => path.relative(_CFG.ROOT, r) || '.').join('  ') + '  + 仓库根一级')
+console.log('  扫描根：' + ROOTS.map(r => path.relative(_CFG.ROOT, r) || '.').join('  ') + (_CFG && _CFG.t && _CFG.t.repoRoot ? '  + 仓库根一级' : ''))
 console.log('  编译 ' + (nScanned - nEsm) + ' 个脚本；' + (nEsm ? '**跳过 ' + nEsm + ' 个 ESM**（vm.Script 编译不了 module —— 这是缺口，不是通过）' : '无 ESM 跳过'))
 
 const problems = []

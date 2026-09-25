@@ -29,7 +29,19 @@
 1. **本文件描述的"预期输出"来自一台已经装好 DSH 的机器。** 在干净机器上，**同样命令的输出会不一样**（例如第 2 步不会打印"已是 X，跳过"、第 4 步不会打印"profile 已存在"）。**你的输出与本文描述不同，通常不代表出错。**
 2. **本文只覆盖到"装好、能起来"。** 装完之后的日常使用不在本文范围。
 3. **`REQUIREMENTS.md` 是本文的补充**（那里有每个数字的测法）。**本文没写清而它写了的，以它为准** —— 允许你读它。
-4. **本文不假设你能中途向使用者提问。** 如果你是无人值守的（派发式 / 子代理），**遇到"必须问使用者"的项：把问题列进最终报告，用 `TODO(未定)` 占位继续往下做**，不要卡住 —— 详见第 5 步。
+4. **★ 本文命令里的尖括号 `⟨...⟩` 是占位符，不是可执行语法**（2026-09-26 补）——
+   在 PowerShell 里 `<` 是**保留运算符**，**照抄会直接报错**（实测：`cd <你拿到的仓库目录>` ⇒
+   `“<”运算符是为将来使用而保留的`）。**你（AI）必须先把它替换成实际值再执行**，
+   替换不了的就按上面的规则处理（问使用者，或记进报告）。
+   > 本文有 6 处命令带这种占位符：`cd <仓库目录>` / `Test-Path <路径>` / `-WorkDir <路径>` /
+   > `--profile <你的profile>` / `-WorkDir <第 2 步的路径>` / `Select-String -Path <工作区>\AGENTS.md`。**每一个都要替换。**
+>
+> ⚠️ **本文里有两种尖括号，别搞混**（2026-09-26 更正）：
+> · **命令里的占位符是 ASCII 的 `<…>`** —— 这个**必须替换**，不换就报错；
+> · **正文里描述"模板中的待填处"用的是 `〈…〉`（中文尖括号）** —— 那是**引用模板的写法**，不是给你替换的；
+> · 而 `deploy/AGENTS.template.md` **里面真正要填的**也是 `〈…〉`。
+> ⇒ **一句话**：**看到 ASCII 的 `<…>` 就换掉；看到 `〈…〉` 是在说模板，回到模板里换。**
+5. **本文不假设你能中途向使用者提问。** 如果你是无人值守的（派发式 / 子代理），**遇到"必须问使用者"的项：把问题列进最终报告，用 `TODO(未定)` 占位继续往下做**，不要卡住 —— 详见第 5 步。
 
 ---
 
@@ -38,22 +50,33 @@
 **先 cd 到仓库根**（本文所有命令都从这里出发）：
 
 ```powershell
-cd <你拿到的仓库目录>
+cd <你拿到的仓库目录>     # ★ 尖括号要换成你的实际路径再跑
 ```
 
 **然后跑这一条，把原始输出给使用者看**：
 
 ```powershell
-# 一次把 7 项要求全测了（别只跑一半 —— 下面每一项都有对应的判据）
+# 一次把 8 项要求全测了（别只跑一半 —— 下面每一项都有对应的判据）
 "OS=" + (Get-CimInstance Win32_OperatingSystem).Caption
 "PS=" + $PSVersionTable.PSVersion.ToString()
-"Node=" + (node --version 2>&1)
-"npm=" + (npm --version 2>&1)
-"pnpm=" + ((pnpm --version 2>&1) -join '')
-"dsh=" + ((Get-Command dsh -ErrorAction SilentlyContinue).Source ?? '(不在 PATH)')
-"磁盘可用GB=" + [math]::Round((Get-PSDrive D).Free/1GB,1)
-"npm registry=" + (try { (npm ping 2>&1 | Select-String 'PONG') -ne $null } catch { $false })
+"Node=" + ((node --version 2>&1) | Where-Object { $_ -notmatch 'UNDICI|trace-warnings' } | Select-Object -First 1)
+"npm=" + ((npm --version 2>&1) | Where-Object { $_ -notmatch 'UNDICI|trace-warnings' } | Select-Object -First 1)
+"pnpm=" + (((pnpm --version 2>&1) | Where-Object { $_ -notmatch 'UNDICI|trace-warnings' }) -join '')
+$dshCmd = Get-Command dsh -ErrorAction SilentlyContinue
+"dsh=" + $(if ($dshCmd) { $dshCmd.Source } else { '(不在 PATH)' })
+"磁盘可用GB=" + [math]::Round((Get-PSDrive $env:SystemDrive.TrimEnd(':')).Free/1GB,1)
+# ★ 2026-09-26 修（访客报告 F6）：原来写死 `Get-PSDrive D` —— 单盘机器（只有 C:）上这一行**整个读数不打印**，
+#   而报错原文一个字都没提文档。改成"系统盘"（`$env:SystemDrive`）就与"普通 Windows 电脑"的承诺一致了。
+"npm registry=" + $(try { (npm ping 2>&1 | Select-String 'PONG') -ne $null } catch { $false })
 ```
+
+> ⚠️ **上面这段必须能在 PowerShell 5.1 上跑**（`REQUIREMENTS.md` 明写「不需要 PowerShell 7」）。
+> **2026-09-26 修过一个致命 bug**：这里原来用了 `??`（空合并运算符，**那是 PS 7 才有的**）与
+> `(try{…}catch{…})`（**`try` 是语句不是表达式，必须用 `$( )` 包起来**）。
+> **后果**：在 PS 5.1 下**整段命令连解析都过不去 ⇒ 8 行读数一行都打印不出来**，
+> 而报错是 `Unexpected token '??'` —— **里面没有一个字提到文档** ⇒
+> **使用者会以为自己的机器有问题，不会想到是这段命令的问题。**
+> ⇒ **改这段命令时，请在 PowerShell 5.1 上真的跑一遍**（本机 `pwsh` 可能根本没装）。
 
 对照下表逐项判定（数来自实测，完整版见 `REQUIREMENTS.md`）：
 
@@ -65,7 +88,7 @@ cd <你拿到的仓库目录>
 | **npm** | 在 PATH 里 | **停** |
 | **pnpm** | 已装，或 `corepack enable pnpm` 能成功 | 让脚本自己试（它会），失败则报错 |
 | **`dsh`** | 可有可无（脚本会装）| **若已有**：**先读第 2 步的冲突检查** —— 这是本流程最容易出事的地方 |
-| **磁盘** | **约 1.8 GB 可用** | 提醒使用者，但可继续 |
+| **磁盘** | **约 2.6 GB 可用** | 提醒使用者，但可继续 |
 | **网络** | `npm ping` 能通 | 装的过程要下载；**装完可断网** |
 
 > **★ 你不能执行命令时**：告诉使用者你没这个能力，把上面那条命令给他，**不要假装跑过了**。
@@ -79,17 +102,49 @@ cd <你拿到的仓库目录>
 ```powershell
 "DSH_HOME 存在=" + (Test-Path "$env:USERPROFILE\.dsh")
 "已有 profile=" + ((Get-ChildItem "$env:USERPROFILE\.dsh\profiles" -Directory -EA SilentlyContinue).Name -join ',')
-"已有 dsh 版本=" + ((& dsh --version 2>&1) -join '')
+"已有 dsh 版本=" + (((& dsh --version 2>&1) | Where-Object { $_ -notmatch 'UNDICI|trace-warnings' }) -join '')
+> ★ 2026-09-26 修（访客报告 F7）：这里原来没过滤噪声 —— 实测会打出
+> `(node:32232) [UNDICI-EHPA] Warning: …0.1.7-rc.2`，而**下面判定要求精确比对版本**。
+> 第 1 步那段一直是有过滤的，**同一文档两段同类命令不一致**，现已统一。
 "凭据文件=" + (Test-Path "$env:USERPROFILE\.dsh\.credentials.yaml")
 ```
 
 **判定**：
 
+> ⚠️ **先说清退出码 1 的两种成因**（2026-09-26 补）：
+> **① 环境不满足**（缺 Node/npm、Node 版本太旧）；**② 检测到已装别的 DSH 版本、或读不出它的版本**。
+> **另外还有两个"未在声明里、但会出现"的 exit 1**：**参数拼错**（脚本体一行都不执行）、
+> **未捕获的终止错误**（profile 的 `package.json` 坏了 ⇒ 永不打印收尾汇总）。
+> ⇒ **别只看数字：把 FAIL 那几行原文抄给使用者看。**
+
+
 | 情况 | 怎么办 |
 |---|---|
 | **`DSH_HOME` 不存在**（干净机器）| **继续** —— 这是最理想的情况 |
-| **存在，且版本就是脚本锁定的那个** | 脚本第 2 步会打印"已是 X，跳过"⇒ **继续** |
-| **存在，但是另一个版本** | **⚠️ 停下，问使用者**。脚本会以**退出码 1** 结束并给出三条出路（保留现有 / 加 `-Force` 覆盖 / 先卸载再装）。**把三条出路念给他，让他选** —— **不要自己拍板**，覆盖可能让他现有环境**静默残废**（实测：宿主与插件强耦合，覆盖后旧插件 11/11 报 `failed to import`，**而服务照样起、界面照样开，只是插件全没了**）|
+| **存在，且版本就是脚本锁定的那个** | ⚠️ **先别急着继续** —— **版本相同 ≠ 那个 profile 没被改过**。先跑下面那条"看它装了什么"，再按下表判 |
+| **存在，版本相同，且该 profile 已有插件与清单不一致**（或装了清单里没有的）| **⚠️ 停下，问使用者**：那个 profile 是你正在用的，脚本会**就地改写它**（改 `pnpm-workspace.yaml` 的 `allowBuilds`/`overrides`、对同一个 profile 跑 N 次 `dsh plugin add`）。**把差异念给他听，让他选"就改这个"还是"换个 profile"** |
+| **存在，版本相同，且该 profile 里没有插件或恰好一致** | **继续**（脚本第 2 步会打印"已是 X，跳过"）|
+| **存在，但是另一个版本** | **⚠️ 停下，问使用者**。脚本会以**退出码 1** 结束并给出三条出路（保留现有 / 加 `-Force` 覆盖 / 先卸载再装）。**把三条出路念给他，让他选**
+| **存在，但"读不出版本"**（`dsh --version` 报错 / 没有版本号）| **⚠️ 停下，问使用者**。这种 dsh **处于半坏状态**（shim 还在、跑不起来），脚本**也会以退出码 1 结束**，并说出原因 |
+
+**★ 判断"那个 profile 有没有被改过"—— 跑这一条**：
+
+```powershell
+dsh plugin --profile web list        # ★ 若你的 profile 不叫 web，换成实际名字
+```
+
+**怎么读它**（2026-09-26 实测的真实例子）：
+```
+├── dshmarket@1.38.1            ← 脚本要装的是 1.65.1 ⇒ **不一致**
+├── @ychris12138/dsh-usage-stats@0.3.1   ← 脚本要 0.3.3 ⇒ **不一致**
+├── dsh-done-whale@1.0.0        ← 清单里根本没有它 ⇒ **这是使用者自己的东西**
+```
+> **⇒ 只要出现"版本对不上"或"清单外的插件"，就说明这个 profile 是**使用者在用的**，
+> 不是"一个空壳"。**这时候脚本装完会把他的插件顶到脚本锁定的版本**（见本文件末尾"overrides 会把版本顶回去"那节）。
+>
+> **★ 这不是"脚本有 bug"，而是"这个决定必须由人来做"。**
+> 一个守规矩的 AI 如果在这里无条件"继续"，就会**合规地改掉使用者的生产环境** ——
+> 所以这一支必须**停下问**，不能靠"版本相同"就放行。
 
 **紧接着定工作区位置**（**必须问使用者**）：
 
@@ -99,18 +154,26 @@ cd <你拿到的仓库目录>
 拿到路径后确认不冲突：
 
 ```powershell
-Test-Path <使用者给的路径>
+Test-Path <使用者给的路径>     # ★ 同上：尖括号换成实际路径
 ```
 
 - **`False`** ⇒ 继续；
 - **`True`** ⇒ **停下问使用者**：目录已存在，**继续用它**还是**换一个**？
-  **`-Force` 是"覆盖已装的 DSH 本体"，与"工作区目录已存在"是两件事** ——
-  目录已存在时，脚本自己会问要不要沿用，**你不需要也不应该用 `-Force`**。
+  **`-Force` 是"覆盖已装的 DSH 本体"，与"工作区目录已存在"是两件事** —— **两种情况下都不该用它**。
+  > ⚠️ **但脚本不会替你问**（2026-09-26 更正：此前这份文档写的是"脚本自己会问要不要沿用" —— **那是错的**）。
+  > 实测 `install.ps1` 全文 **`Read-Host` 出现 0 次**；目录已存在时它只打印一句 `OK 已存在 <路径>` 就**直接沿用**，
+  > 然后会**改写里面的 profile 配置、往里装 7 个插件、往里落 `AGENTS.template.md`**。
+  > **⇒ 所以"这个目录能不能用"必须由你（AI）问使用者决定 —— 不能靠脚本兜底。**
+  > **问不出来的话**：宁可换一个肯定不冲突的新目录（如 `<原路径>-新`），也不要沿用你不了解内容的目录。
 
 ### 第 3 步 · 先干跑一遍（不碰任何东西）
 
+> **干跑的收尾会打印「[DRY-RUN] 流程演练完毕 —— 本次什么都没验证」** —— **那是刻意的**：
+> 干跑确实什么都没验证，所以**它不再说"无问题"**（早先说"无问题"是假绿，2026-09-26 改掉）。
+> **别把这句话当成出错**，看到它继续走第 4 步即可。
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -DryRun -WorkDir <第 2 步的路径>
+powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -DryRun -WorkDir <第 2 步的路径>   # ★ 替换后再跑
 ```
 
 **把输出原样给使用者看。**
@@ -118,7 +181,7 @@ powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -DryRun -WorkDir <�
 > **★ 关于"看懂"的判据（重要 —— 别用错这条闸门）**：
 > **干跑的设计就是只给"阶段 + 包名与版本"，不给内容** ——
 > 第 [5] 步只报标题（不报它要写哪些键值）、[7] 步只报要核对什么、[9] 步的 `--dump-config` 不打印内容、
-> [10] 步的端口写成**字面占位符** `--port <空闲端口>`（**照抄会报错，别抄它**）。
+> **（2026-09-26 更正）** [10] 步在干跑时**不打印任何可复制的命令** —— 它打印的是一句说明："端口由脚本自己挑一个没被占用的；上面这行不是可复制的命令"。**那段说明里提到了旧实现写成 `--port <空闲端口>`（字面量、照抄会报错）—— 那只是历史说明，你不用去找那一行。**
 > **⇒ 所以判据不是"每一行都看懂"，而是**：
 > **① 10 个阶段的顺序对不对；② 要装的那 7 个插件的包名与版本是不是你能接受的；
 > ③ 目标三元组（`DSH_HOME` / profile 名 / 工作区路径）是不是你要的。**
@@ -126,8 +189,18 @@ powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -DryRun -WorkDir <�
 
 ### 第 4 步 · 真装
 
+> **它会动你 profile 里的两个文件（2026-09-26 起会先备份）**：
+> `%USERPROFILE%\.dsh\profiles\<profile>\` 下的 **`pnpm-workspace.yaml`**（就地改写：补 `allowBuilds` 与一组 `overrides`）
+> 与 **`package.json`**（`dsh plugin add` 会写 dependencies 与 bundles）。
+> **动手前，脚本会给这两个文件各存一份带时间戳的副本**（`<原名>.bak-YYYYMMDD-HHMMSS`）——
+> **改坏了可以用它退回去。** 报告里请把这两个备份文件名带上（使用者可能要用）。
+>
+> **它不会删你的东西**：不删文件、不删插件、不动工作区里的数据。
+> **但版本会被它的清单顶住**：`overrides` 是 workspace 级生效的 —— 你手上如果有更新的版本，
+> 会被这些 pin 顶回它锁定的版本。**这一点要让使用者知道。**
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -WorkDir <路径>
+powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -WorkDir <路径>   # ★ 替换后再跑
 ```
 
 **这一步会**：装 DSH 本体（版本锁定）→ 建工作区 → 初始化 profile → 预置两段 pnpm 配置 → 装 7 个插件 → 验证 → 落模板 → 起一次服务验证。**实测约 36 秒起，视网络而定。**
@@ -158,7 +231,9 @@ powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -WorkDir <路径>
 
 ```powershell
 # 先数一遍，别凭记忆
-(Select-String -Path "$env:USERPROFILE\dsh-workspace\AGENTS.template.md" -Pattern '〈[^〉]+〉' -AllMatches).Matches.Count
+# ★ 把 <工作区> 换成第 2 步那个路径（**这里以前写死成 $env:USERPROFILE\dsh-workspace，
+#   而文档自己建议"宁可换一个肯定不冲突的新目录" ⇒ 照它建议做的人这条命令必错**）：
+(Select-String -Path "<工作区>\AGENTS.template.md" -Pattern '〈[^〉]+〉' -AllMatches).Matches.Count
 ```
 
 **分三类处理**：
@@ -166,15 +241,24 @@ powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -WorkDir <路径>
 | 类型 | 占位符 | 怎么处理 |
 |---|---|---|
 | **你直接填** | `〈你的项目根〉` | 就是第 2 步那个路径 |
-| | `〈凭据文件位置〉` | `%USERPROFILE%\.dsh\.credentials.yaml`（用 `Test-Path` 确认） |
-| | 其余能由本机环境推出的 | **填，并标注"由环境推断"** |
+| | `〈你的验收命令〉` | 问：这个项目跑什么命令算"通过"？（**第一天答不出就留空**）|
+| | 其余**能由本机环境推出**的 | **填，并标注"由环境推断"** |
 | **必须问使用者** | `〈你的强模型〉` `〈provider〉` `〈model〉` | 问：你手上有哪些模型通道？ |
-| | `〈你的第二家〉` | 问：核验要用哪个**不同家族**的模型？（**同家族不算核验**） |
+| | `〈你的第二家〉` | 问：核验要用哪个**不同家族**的模型？（**同家族不算核验**）|
 | | `〈你的廉价长文模型〉` | 问：有便宜的长文模型吗？ |
 | | `〈预警值〉` `〈熔断值〉` | 问：预算上限想设多少？ |
-| | `〈你的验收命令〉` | 问：这个项目跑什么命令算"通过"？ |
-| | `〈如果有，写在这里…〉` | 问：有没有本机特有的坑要记下来？ |
+| | `〈有就写；没有就整行删掉，不要留空占位符〉` | 问：有没有本机特有的坑要记下来？（**答没有 ⇒ 整行删掉，别留占位符**）|
+| **★ 不用替换** | `〈重型编码 / 跨多文件重构 / 需最强推理攻坚〉` · `〈短任务攻坚 / 决策性终审〉` · `〈纯长文输出、无强推理需求、量大〉` | **这三个是"升级判据"的示例标签**（模板自己标注为「**自评标签，不是机械判据**」）。**留着当格式参考即可，不要换成别的东西** |
 | **★ 答不出怎么办** | 上面任何一项 | **写 `TODO(未定)` 并继续** —— **不要卡住，不要自己编。** 在最终报告里列成一张"待使用者确认"清单 |
+
+> ⚠️ **这张表是 2026-09-26 按模板实测重写的**（此前有 2 个占位符**模板里根本不存在**，
+> 另有 3 个**从没被提过**）：**模板实测 18 处 `〈…〉`、14 个不同名。**
+> **改模板里的占位符时，请顺手核对这张表** —— 两者不同步的话，照着做的人会去找一个不存在的占位符。
+>
+> **核对命令**（在仓库根跑，数出来的应等于你看到的数）：
+> ```powershell
+> (Select-String -Path deploy/AGENTS.template.md -Pattern '〈[^〉]+〉' -AllMatches).Matches.Count
+> ```
 
 > **★ 一个具体的坑**：模板里的 provider / model 示例值**出自作者的私有中转站**（脚本第 9 步自己会说"你没有"）。
 > **它们是格式示例，不是可用选项** —— **绝对不要把那些名字当作"使用者可能有的通道"回填**。
@@ -196,10 +280,15 @@ node --version; npm --version; pnpm --version; $PSVersionTable.PSVersion.ToStrin
 Get-NetTCPConnection -State Listen -EA SilentlyContinue | Where-Object LocalPort -ge 3000 | Select-Object LocalPort,OwningProcess
 
 # 4. 插件清单：哪些装了、哪些真进了 bundles
-dsh plugin --profile <你的profile> list
+dsh plugin --profile <你的profile> list   # ★ 替换后再跑
 
-# 5. 占位符：数一遍你填了几处
-(Select-String -Path <工作区>\AGENTS.md -Pattern '〈[^〉]+〉' -AllMatches -EA SilentlyContinue).Matches.Count
+# 5. 占位符：数一遍**还剩几处没填**（这个正则数的是"还留着的 〈…〉" = 没填的处数）
+$__f = "<工作区>\AGENTS.md"
+if (Test-Path $__f) { "还剩 " + (Select-String -Path $__f -Pattern '〈[^〉]+〉' -AllMatches).Matches.Count + " 处没填" }
+else { "⚠️ 找不到 $__f —— **这不是 0，是这份文件还不存在**（第 5 步没做或路径写错了）" }
+# ★ 2026-09-26 修（访客报告 F5）：原来 ① 注释说"数你填了几处"而正则数的是"还留着几处"（**方向相反**）；
+#   ② 加了 `-EA SilentlyContinue` ⇒ 文件不存在时**什么都不打印**（不是 0、不是报错），
+#      而空输出在交付报告里最容易被读成"没问题" —— 那正是本文档自己立的规矩「没查和查过了要长得不一样」的反例。
 ```
 
 **报告格式**：
@@ -247,8 +336,8 @@ dsh plugin --profile <你的profile> list
 
 ## 这套东西装完是什么样（让使用者有预期）
 
-- **一条命令，装出**：一个能跑的 AI 宿主（跨会话记忆、多智能体、用量账本、Web UI）+ 一套 17 项机械检查。
-- **磁盘**约 1.8 GB；**内存**起步约 200 MB、日常 400–900 MB；**CPU 基本不吃**。
+- **一条命令，装出**：一个能跑的 AI 宿主（跨会话记忆、多智能体、用量账本、Web UI）+ 一套 21 项机械检查。
+- **磁盘**约 2.6 GB；**内存**起步约 200 MB、日常 400–900 MB；**CPU 基本不吃**。
 - **API key 可以后填** —— 装完起来后在设置页填即可。
 - **装完可断网用**。
 

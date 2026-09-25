@@ -23,7 +23,13 @@ const AMBIGUOUS_SHORT = { '00': ['00_总览与共性技术底座.md', '00_AI体�
 function walk(dir, out = []) {
   if (!fs.existsSync(dir)) return out
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    // ★★ 2026-09-26 加（F-7 修复的连带发现）：原来只跳过「以 . 开头」与 node_modules，
+    //   而本工作区里有若干**不以 . 开头的内部目录**（回退点 / 沙箱 / 各种测试目录）——
+    //   它们不该被当成"待检查的正文"。实测：`_回退点提交前_20260925` 里的**历史报告**
+    //   被扫出来一堆「文件不存在」—— 那是**历史快照**，不是待修的引用。
+    //   ★ 这套前缀与 `_check_ps_syntax.cjs` / `_check_text_hygiene.cjs` 保持一致。
     if (e.name.startsWith('.') || e.name === 'node_modules') continue
+    if (/^(_回退点|_沙箱|_sandbox|_开荒测试|_复现测试|_clone测试|_fakebin|\.build-|\.tmp-|\.oss-clean)/.test(e.name)) continue
     const p = path.join(dir, e.name)
     if (e.isDirectory()) walk(p, out)
     else if (e.name.endsWith('.md')) out.push(p)
@@ -75,7 +81,13 @@ for (const f of files) {
     // 模式一：`某文件名.md` 附近的 L<数字>
     // ⚠️ 匹配窗口**不得跨越括号或引号** —— 否则会把「描述历史」的句子（如
     //    「我曾留下一个死引用（引 `02` L336…）」）误判成活引用。这是本脚本第一版的假阳性来源。
-    const re = /([\w\u4e00-\u9fa5.\-]+\.md)[^\n（）()「」【】]{0,40}?L(\d+)/g
+    // ★★ 2026-09-26 修（独立核验 F-7 —— 一个假绿）：**文件名字符类里原来不含全角括号**，
+    //   而 `.md` 前面那个字符恰好是 `）` ⇒ 整条匹配失败 ⇒ 引用数永远是 0 ⇒ 报「✅ 未发现悬空引用」。
+    //   实测：`成品（v2）.md` 配一句死引用「见 成品（v2）.md L999」⇒ 解析到 0 处、报通过；
+    //   换成纯 ASCII 文件名 ⇒ 立刻报悬空。
+    //   ★ 注意：**只给"文件名"加括号，不给"匹配窗口"加** —— 窗口跨越括号会把
+    //     「描述历史」的句子误判成活引用（见上面那段注释，那是第一版的假阳性来源）。
+    const re = /([\w\u4e00-\u9fa5.（）\-]+\.md)[^\n（）()「」【】]{0,40}?L(\d+)/g
     let m
     while ((m = re.exec(ln)) !== null) {
       const target = m[1], n = Number(m[2])

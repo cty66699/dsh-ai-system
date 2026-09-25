@@ -153,6 +153,28 @@ for (const [sess, list] of bySession) {
   if (list.length !== q) overQuota.push({ sess, list, q })
 }
 
+// ★★ 2026-09-26 加（独立核验 F-4 —— 一个假绿）：
+//   原来唯一的牙齿是 `if (list.length !== q)` —— **相等**判定 ⇒
+//   把配额调成「恰好的数字」（backlogBySession 里写 3、实际也 3）就**完全静音**。
+//   而"五桶全空（断言/部分/外部/领域/豁免 都是 0）"时 —— 也就是**一条都没分诊** —— 本该无条件报红。
+//   ⇒ 实测：3 条 active lesson、五桶全空、配额=3 ⇒ 它打印「未分诊：3 条」然后报
+//     「✅ 每条 active lesson 都有归宿」exit 0。**上面两行与结论直接矛盾。**
+{
+  // ★ 修（2026-09-26，第 49 轮）：这里原来把**同一份五桶清单又写了一遍** ——
+  //   而第 58 行已经有一份 `BUCKETS` 了。两处**各自漂移**时（比如将来加第 6 个桶只改一处）
+  //   会出现「一处认、一处不认」的静默不一致。**⇒ 改成用同一个常量。**
+  //   ★ 这是「列举会漂移」的**第 6 种形态**：不是清单漏了东西，是**同一份清单写了两遍**。
+  const totalBuckets = BUCKETS.reduce((a, k) => a + Object.keys(ledger[k] || {}).length, 0)
+  // ★ 变量名以本文件为准：ACTIVE 是「记忆库里 status === active 的 id 集合」（第 73 行），
+  //   untriaged 是「其中在账本里没有归宿的」（第 130 行）。
+  if (ACTIVE.size > 0 && totalBuckets === 0) {
+    console.error('❌ ' + ACTIVE.size + ' 条 active lesson，但毕业账本五个桶**全是空的** —— 一条都没分诊。')
+    console.error('   ⇒ 「有 lesson 且一个归宿都没有」不可能算通过。')
+    console.error('   ⇒ 给每条 lesson 一个归宿（断言 / 外部复核 / 领域事实 / 书面豁免），或把它标 stale。')
+    process.exit(1)
+  }
+}
+
 if (overQuota.length) {
   const selfOver = overQuota.filter(o => SELF && o.sess === SELF)
   const otherOver = overQuota.filter(o => !(SELF && o.sess === SELF))

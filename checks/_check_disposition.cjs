@@ -30,6 +30,18 @@ if (!fs.existsSync(MAN)) die('找不到清单：' + MAN)
 let man
 try { man = JSON.parse(readText(MAN)) } catch (e) { die('清单 JSON 解析失败：' + e.message) }
 
+// ★★ 2026-09-26 加（独立核验 F-3 —— 一个假绿）：
+//   原来 tracks 为空数组、**或者键名拼错（写成 track 单数）** 时，
+//   本脚本会打印「严格轨道：0 条」然后报「✅ 严格轨道的发现全部逐条有处置」exit 0。
+//   ⇒ 一个什么都没查的清单，得到了一句「全部有处置」。
+//   ★ 作者已经在 _check_conformance.cjs:88 修过同一个洞（0 条目 ⇒ 判失败）—— 唯独这一条没修。
+if (!Array.isArray(man.tracks) || man.tracks.length === 0) {
+  console.error('❌ 结构性错误：清单里解析出 0 条严格轨道 —— 检查类脚本必须断言集合非空。')
+  console.error('   （常见原因：清单本来就是空的；或者键名拼错了 —— 是 tracks，不是 track。）')
+  console.error('   ⇒ 「没有轨道要查」不等于「全部有处置」。')
+  process.exit(2)
+}
+
 const findings = []
 const legacyShown = []
 
@@ -95,20 +107,35 @@ if (badExempt.length) {
     + badExempt.map(e => (e && e.file) || '(连 file 字段都缺)').join('、'))
 }
 
-const scanDirs = _CFG.t.dispositionScanDirs || [HERE, path.join(HERE, '_briefs')]
+// ★★★ 2026-09-26 修（一条从**独立审查**里躺了很久没处理的假绿 + 一次系统扫描把它照了出来）：
+//   原来是 `_CFG.t.dispositionScanDirs || [HERE, path.join(HERE, '_briefs')]` ——
+//   **未配置就回落到"断言层自己的目录"**。
+//   ⇒ 后果有**两个方向**，两个都是错的（取决于那个目录里恰好有什么）：
+//     · 扫到别人的报告 ⇒ 报「✅ 通过」（**假绿**：它查的是断言层自己的文件，不是被检查的工程）；
+//     · 扫到自己人 ⇒ 报「⚠️【孤儿报告】…核查/xxx.md」（**假红**：报出来的"问题"不属于被检查的工程）。
+//   ★ 这违反了本仓库自己的头号纪律：**"未配置的项不会回落到默认布局（否则会悄悄混用两个工程、得出假绿）"**。
+//   ⇒ 改成**软依赖**：**未配置就跳过「孤儿报告」这一块，并明说**；
+//     其余的检查（逐条处置、豁免理由、断言失效…）**照跑** —— 它们**不依赖** `dispositionScanDirs`。
+const scanDirs = _CFG.t.dispositionScanDirs || null
 // ⚠️ 这里曾被一次 edit 把换行吃掉，合成 `]const orphans = []` ⇒ SyntaxError。
 //    教训：**用 old_string 结尾带 \n、new_string 不带 \n 做"删空行"是危险的** —— 它会粘行。
 const orphans = []
-for (const dir of scanDirs) {
-  if (!fs.existsSync(dir)) continue
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith('.md')) continue
-    const rel = norm(path.relative(BASE, path.join(dir, f)))
-    if (declared.has(rel) || exempt.has(rel)) continue
-    orphans.push(rel)
+if (scanDirs) {
+  for (const dir of scanDirs) {
+    if (!fs.existsSync(dir)) continue
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.md')) continue
+      const rel = norm(path.relative(BASE, path.join(dir, f)))
+      if (declared.has(rel) || exempt.has(rel)) continue
+      orphans.push(rel)
+    }
   }
+} else {
+  console.log('  ⏭️ 未配置 dispositionScanDirs ⇒ 跳过「孤儿报告」这一块检查')
+  console.log('     （这一块要扫一个目录，看里面有没有既不是发现源头、也不是裁定记录、又没有豁免的报告；')
+  console.log('       要看它，就把 dispositionScanDirs 指向你的报告目录。）')
 }
-if (orphans.length) findings.push(`【孤儿报告】以下文件既不是发现源头也不是裁定记录，也没有书面豁免 —— ${orphans.join('、')}`)
+if (scanDirs && orphans.length) findings.push(`【孤儿报告】以下文件既不是发现源头也不是裁定记录，也没有书面豁免 —— ${orphans.join('、')}`)
 
 // ── 输出 ────────────────────────────────────────────────────────────────
 const strict = (man.tracks || []).filter(t => t.mode === 'strict')
@@ -126,6 +153,10 @@ if (findings.length) {
 }
 
 console.log('')
-console.log('✅ 严格轨道的发现全部逐条有处置，无孤儿报告')
+// ★★ 2026-09-26 改：这句结论必须**跟着实际查了什么**走 ——
+//   孤儿检查**没跑**的时候，不能在结论里声称「无孤儿报告」（那是把"没查"说成"查过了"）。
+console.log(scanDirs
+  ? '✅ 严格轨道的发现全部逐条有处置，无孤儿报告'
+  : '✅ 严格轨道的发现全部逐条有处置（**「孤儿报告」那一块没查** —— 未配置 dispositionScanDirs）')
 console.log('   （检查强度说明：本脚本断言「每条发现单独有一行处置」。它**不能**判断处置对不对 ——')
 console.log('     那是 T6 的活；也**不能**判断 legacy 轨道的 1:1 映射是否完整 —— 那是已知残余。）')

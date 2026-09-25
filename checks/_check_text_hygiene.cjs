@@ -26,11 +26,39 @@ const path = require('node:path')
 const vm = require('node:vm')
 
 const HERE = __dirname
-const ROOT = path.resolve(HERE, '..')
+// ★ 2026-09-26 修（独立审查抓出的 bug —— 报告里叫它"最阴的一个"）：
+//   原来这里是 `const ROOT = path.resolve(HERE, '..')` —— **硬编码**扫脚本自己的上一级目录，
+//   而且**不看任何配置**。后果实测：
+//     用户按文档的最小配置跑 ⇒ 看到「文本卫生 … ✅ 通过」⇒ 读成"我的项目没文本问题"；
+//     而它扫的其实是**断言层自己的 46 个文件**（`checks/*.cjs`），
+//     **换 `--target`、换 cwd、换 repoRoot 都一样**。
+//   ⇒ 这正是本仓库自己立的第一条纪律「**绝不回落默认布局，否则会得出假绿**」的反例。
+//   ★ 正解不是"再猜一个目录"，而是照同类检查 `_check_hygiene.cjs` 早就做对的样子：
+//     扫描根由配置给（`textHygieneRoots`），**没配就显式跳过（exit 3）**。
+let ROOTS = null
+try {
+  ROOTS = require('./_paths.cjs').requirePaths(['textHygieneRoots']).t.textHygieneRoots
+} catch { ROOTS = null }          // 路径层不在、或该键未声明 ⇒ 视为"未配置"
+if (!ROOTS || !ROOTS.length) {
+  console.log('⏭️  未配置：textHygieneRoots ⇒ 本项**跳过**')
+  console.log('     （给它一个扫描根才跑，例如 "textHygieneRoots": ["."]）')
+  console.log('     ★ 这里**故意不回落默认布局** —— 否则会去扫断言层自己的文件，')
+  console.log('       然后报一个"✅ 通过"，让人误以为自己的项目没问题。')
+  process.exit(3)
+}
+// ★★ 2026-09-26 修（独立核验 F-5）：原来只取 ROOTS[0] —— 而 textHygieneRoots 是**数组**。
+//   实测：["th1","th2"] 且坏文件在 th2 ⇒ 报「✅ 通过」；把顺序换成 ["th2","th1"] ⇒ 立刻报红。
+//   ★ 现实后果：随仓库发布的 example/_target.json 写的就是 [".", "../docs"] ⇒
+//     **docs/ 永远不会被文本卫生扫到**（同一个覆盖缺口换了个脚本复发）。
+const ROOT = ROOTS[0]
+const ALL_ROOTS = ROOTS.slice()   // 全部都要扫（见上）
 const findings = []
 const hints = []   // 提示（不判红、不影响退出码）—— 判据不够可靠但值得看一眼的
 
-const SKIP_DIRS = new Set(['node_modules', '.git', '.pnpm', 'public', 'sessions', 'cache', 'logs', 'attachments'])
+// ★ 修（第 49 轮）：这份清单原来与 `_check_ps_syntax.cjs` 各写了一遍 ⇒ 改用共享常量。
+//   ★ 别写 `catch { return [...] }` 那种 fallback —— 那**又把清单写了一遍**（实测被重复清单检查抓到）。
+//     同目录的 `require` 不会失败；真失败了也该**当场报错**，而不是悄悄用一份可能过期的副本。
+const SKIP_DIRS = new Set(require('./_paths.cjs').SKIP_DIRS_SCRIPTS)
 const SKIP_DIR_PREFIX = ['.build-', '.tmp-', '.oss-clean', '_回退点']
 const MAX_SIZE = 2 * 1024 * 1024
 const MUST_NOT_HAVE_BOM = new Set(['.cjs', '.js', '.mjs', '.json', '.yaml', '.yml', '.md', '.txt', '.gitignore'])
@@ -104,11 +132,27 @@ function checkWrongComment(files) {
 
 // 4. 生成物比源陈旧
 function checkGeneratedFreshness() {
-  const pairs = [
-    [path.join(HERE, '_public_src', 'deploy', 'install.ps1'), path.join(HERE, 'public', 'deploy', 'install.ps1')],
-    [path.join(HERE, '_public_src', 'README.md'), path.join(HERE, 'public', 'README.md')],
-    [path.join(HERE, '_public_src', 'REQUIREMENTS.md'), path.join(HERE, 'public', 'REQUIREMENTS.md')],
-  ]
+  // ★★ 2026-09-26 修（**覆盖缺口**）：这里原来是**手写的 3 对** ——
+  //   `_public_src/deploy/install.ps1` / `_public_src/README.md` / `_public_src/REQUIREMENTS.md`。
+  //   实测 `_public_src/` 里其实有 **12 个手写源**，**漏了 9 个**：
+  //     AI-INSTALL.md（23.6 KB）/ 产物格式.md / 配置说明.md / deploy/AGENTS.template.md /
+  //     LICENSE / .gitignore / _check_provider_config.cjs / _check_verify_profile.cjs / _refresh_snapshots.cjs。
+  //   ⇒ 那 9 个**改了源不会有人知道** —— 而"改了源忘了重新生成"正是这条检查存在的**唯一理由**。
+  //   ★ 修法：**不再手写**，改读生成器落下的 `_public_map.json`（每个产物 ← 它的源，由 `emit` 顺手记）。
+  //     为什么不在本文件里列举：**手写的清单会漂移**（这次就是漏了 9 个，而它挂了不知道多久）。
+  const mapFile = path.join(HERE, '_public_map.json')
+  if (!fs.existsSync(mapFile)) {
+    // ★ 读不到就**显式说出来**，不静默跳过（本仓库的纪律：「找不到就要说出来」）。
+    console.log('   ⚠️ 没有 `_public_map.json`（生成器还没跑过）⇒ **这一项没查成，不是通过**。')
+    console.log('      跑一次 `node _build_public_docs.cjs` 会生成它；它记录「每个产物 ← 它的源」。')
+    return
+  }
+  let map = {}
+  try { map = JSON.parse(fs.readFileSync(mapFile, 'utf8')) } catch (e) {
+    push('生成物陈旧', '_public_map.json', 0, '映射表解析失败：' + String(e.message).slice(0, 80) + '（生成器那边格式变了？）', '检查 _build_public_docs.cjs 的落盘代码')
+    return
+  }
+  const pairs = Object.entries(map).map(([destRel, srcAbs]) => [srcAbs, path.join(HERE, 'public', destRel)])
   for (const [src, dst] of pairs) {
     if (!fs.existsSync(src) || !fs.existsSync(dst)) continue
     if (fs.statSync(src).mtimeMs > fs.statSync(dst).mtimeMs + 1000) push('生成物陈旧', rel(dst), 0, '源（' + rel(src) + '）比它新 ⇒ 改了源但没重新生成公开仓', '跑 node _build_public_docs.cjs')
@@ -157,7 +201,8 @@ function checkMixedEol(files) {
 function checkJsSyntax(files) {
   for (const f of files) {
     const ext = path.extname(f).toLowerCase()
-    if (!['.cjs', '.js', '.mjs'].includes(ext)) continue
+    // ★ 修（第 49 轮）：与语法门共用同一份「JS 扩展名」清单。
+    if (!require('./_paths.cjs').JS_EXT.includes(ext)) continue
     const buf = readBuf(f); if (!buf || buf.length > MAX_SIZE) continue
     const src = textOf(buf)
     if (/^\s*(import|export)\s/m.test(src)) continue
@@ -166,7 +211,8 @@ function checkJsSyntax(files) {
 }
 
 const t0 = Date.now()
-const files = walk(ROOT)
+// ★ 改成遍历全部扫描根（原来只扫第一个）
+const files = [...new Set(ALL_ROOTS.flatMap(r => walk(r)))]
 checkBom(files); checkPsQuotes(files); checkWrongComment(files); checkGeneratedFreshness()
 checkFullWidth(files); checkMixedEol(files); checkJsSyntax(files)
 

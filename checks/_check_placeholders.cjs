@@ -32,13 +32,31 @@ const PATTERNS = [
   [/[（(]\s*略\s*[)）]|×××|xxx+/g, '略去符'],
 ]
 
+  // ═══ 豁免机制（2026-09-26 加 —— 此前**一点都没有**，这是个真空缺）═══
+  // 为什么要加：这个检查的判据是「成品里有没有未完成态标记」，而它**必然**会在两种情况下误报：
+  //   ① **那不是本次交付的成品**（例如工作区里另一个项目的文档，它的待办与本次无关）；
+  //   ② **那处标记是"诚实的待办"**（作者明确写了"待核/未实测"，那是如实标注，不是没做完没说）。
+  // ⇒ 而本项目一贯的原则是「**禁止静默豁免**」：豁免可以存在，**但必须写明理由、且理由可审计**。
+  //   此前这个脚本没有豁免通道 ⇒ 使用者只有两条路：**要么改产品（可能篡改证据）、要么关掉这个检查（更糟）**。
+  // ★ 照 `_check_refs.cjs` 的做法，加**两种**（都要求带理由）：
+  //   ① **行内**：该行含 `placeholders:ignore` ⇒ 跳过，**理由写在行内**；
+  //   ② **文件级**：配置里 `placeholderExempt` = `{ "文件名.md": "理由" }` ⇒ 整个文件跳过，
+  //      **并在输出里把"豁免了谁、为什么"打出来**（不打印就等于静默）。
+  const EXEMPT_FILES = _CFG.t.placeholderExempt || {}
+  const exempted = []
 const found = []
 let scanned = 0
 for (const [label, file] of TARGETS) {
   if (!fs.existsSync(file)) { console.error('❌ 找不到' + label + '：' + file); process.exit(2) }
   scanned++
+  // ★ 文件级豁免（理由在配置里，且下面会打印出来）
+  const __base = path.basename(file)
+  // ★ 注意：这里是 `for` 循环体，不是函数体 ⇒ 必须用 `continue`（写 `return` 是语法错）。
+  if (EXEMPT_FILES[__base]) { exempted.push([__base, EXEMPT_FILES[__base]]); continue }
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/)
   lines.forEach((line, i) => {
+    // ★ 行内豁免（理由写在那一行里，让豁免本身可审计）
+    if (/placeholders:ignore/.test(line)) return
     for (const [re, why] of PATTERNS) {
       const m = line.match(re)
       if (m) found.push({ label, file, line: i + 1, why, hit: [...new Set(m)].join(' '), text: line.trim().slice(0, 90) })
@@ -49,8 +67,18 @@ for (const [label, file] of TARGETS) {
 // ★「扫了个空 ≠ 干净」—— 一个文件都没扫到就必须判失败，不能报 ✅。
 if (scanned === 0) { console.error('❌ 没有扫到任何交付物 —— 扫描类检查必须断言集合非空。'); process.exit(2) }
 
+// ★ 豁免必须**打印出来** —— 不打印就等于静默豁免，而那正是本项目禁止的。
+if (exempted.length) {
+  console.log('⏭️  按配置豁免了 ' + exempted.length + ' 份（理由如下，可审计）：')
+  for (const [b, why] of exempted) console.log('     · ' + b + ' —— ' + why)
+}
+
 if (!found.length) {
-  console.log('✅ ' + scanned + ' 份交付物未出现占位符（' + PATTERNS.length + ' 类模式）')
+  // ★ 修（2026-09-26）：原来这里说「N 份交付物未出现占位符」—— 而豁免掉的文件**并没有被查**，
+  //   那句话会把"没查"说成"查了且干净"（本项目最忌讳的那种）。改成把两者分开报。
+  const reallyScanned = scanned - exempted.length
+  console.log('✅ ' + reallyScanned + ' 份交付物未出现占位符（' + PATTERNS.length + ' 类模式）'
+    + (exempted.length ? '；另有 ' + exempted.length + ' 份**按配置豁免、未参与本次检查**（理由见上）' : ''))
   console.log('   （单项可靠：有占位符 ⇒ 一定不是成品；无占位符 ⇏ 已完整 —— 见脚本头部"检查强度说明"）')
   process.exit(0)
 }
