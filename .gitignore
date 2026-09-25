@@ -1,0 +1,4 @@
+﻿# 生成物/临时
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,28 @@
+{
+  "_说明": "示例跨轮结转账：把「本轮未做」从记录位变成有强制的待办。由 _check_carryover.cjs 断言。",
+  "_规则": [
+    "任何 opened_round 早于当前 round 的条目，不得保持 open —— 必须 done 或 waived。",
+    "**done 必须可验证**：写 verify{file, contains}，脚本会去文件里找那串文字。",
+    "**豁免必须带 reason + trigger**。"
+  ],
+  "round": 1,
+  "items": [
+    {
+      "id": "E-1",
+      "desc": "示例：把 R-1 的统计域说明补进成品",
+      "opened_round": 1,
+      "status": "done",
+      "done_round": 1,
+      "where": "成品.md「数学工具」一节",
+      "verify": { "file": "成品.md", "contains": "统计域" }
+    },
+    {
+      "id": "E-2",
+      "desc": "示例：跨模态权重的实测标定尚未做",
+      "opened_round": 1,
+      "status": "waived",
+      "reason": "需要受控试件与实测数据，本示例工程不含这些材料 —— 示例只演示机制，不演示真实标定。",
+      "trigger": "一旦示例工程接入真实受控试件数据，本条立即变回必做。"
+    }
+  ]
+}
