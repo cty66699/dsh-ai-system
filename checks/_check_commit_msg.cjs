@@ -135,10 +135,21 @@ for (const c of commits) {
     }
   }
   // ④ 说的与做的对得上吗（**这一条才是有牙齿的**）
-  //   抠出信息里提到的"像文件名"的串（含扩展名，或反引号里带下划线/点的短串）
+  // ★★★ 2026-09-26 修（第 56 轮，**它上线后第一次报的就是误报 —— 而那是它自己的 bug**）：
+  //   原版有两个假阳性来源，实测各中一次：
+  //     ① **长扩展名被短扩展名前缀截断**：正则写成 `\.(?:cjs|js|mjs|ps1|md|json|ya?ml)` ——
+  //        `json` 排在 `js` 之后 ⇒ 匹配 `_target.json` 时先命中 `js` ⇒ 抠出 `_target.js`
+  //        （**与第 52 轮那个 `{1,2}` 量词同类：正则的写法让人读出不存在的东西**）。
+  //        ⇒ 修法：**长的排前面**（`json|ya?ml` 在 `js|mjs` 之前），并加词边界 `(?![a-z])`。
+  //     ② **引文里的文件名**：提交信息的**正文**里我引用了一条命令
+  //        `['checks/_check_all.cjs', '--fast', …]` 作为**论据** —— 而它并不表示"我改了那个文件"。
+  //        ⇒ 修法：**第 ④ 条只针对首行（subject）**。首行才是"我声称做了什么"；
+  //          正文里出现文件名，多数是在**解释、引用、举例**。
+  //   ★ 这条修法的意义：**一个会误报的检查，会被无视**（本项目已经写过一次这条纪律）。
   const mentioned = new Set()
-  for (const m of (c.subject + '\n' + c.body).matchAll(/`?([A-Za-z0-9_\-]+\.(?:cjs|js|mjs|ps1|md|json|ya?ml))`?/g)) mentioned.add(m[1])
-  for (const m of (c.subject + '\n' + c.body).matchAll(/`(_[A-Za-z0-9_\-]+)`/g)) mentioned.add(m[1] + '.cjs')
+  const head = c.subject
+  for (const m of head.matchAll(/`?([A-Za-z0-9_-]+\.(?:json|yaml|yml|cjs|mjs|ps1|js|md))`?(?![a-z0-9])/gi)) mentioned.add(m[1])
+  for (const m of head.matchAll(/`(_[A-Za-z0-9_-]+)`/g)) mentioned.add(m[1] + '.cjs')
   for (const name of mentioned) {
     const hit = [...changed].some(f => f.endsWith(name) || f.endsWith('/' + name) || path.basename(f) === name)
     if (!hit) {
