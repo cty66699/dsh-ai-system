@@ -100,8 +100,16 @@ console.log('')
     catch (e) { code = (typeof e.status === 'number' ? e.status : 99) }
     fs.closeSync(fd)
     const out = fs.readFileSync(log, 'utf8')
-    if (/生成物陈旧/.test(out)) {
-      const n = (out.match(/\[生成物陈旧\]/g) || []).length
+    // ★★★ 第 61 轮修（**它第一版就报了自己的 bug —— 而这已经是同一个模式的第 5 次**）：
+    //   第一版的判据是 `/生成物陈旧/.test(out)` —— **而那个词也出现在文本卫生的标题行里**：
+    //     `▶ 文本卫生检查（BOM多余 / 引号 / 注释符 / 生成物陈旧 / 全角标点 / …）`
+    //   ⇒ 于是它**永远匹配** ⇒ 实测打出「有 **0** 处"生成物陈旧"」**然后照样警告**。
+    //   ★ 与「提交信息里提到的文件名」（第 56 轮）是同一族：**引文/标题也算命中**。
+    //   ⇒ 判据改成**数真正的标记** `[生成物陈旧]`（那才是它报出来的东西），
+    //     而不是"那个词出现过没有"。**有标记才有陈旧，没标记就没有。**
+    const staleCount = (out.match(/\[生成物陈旧\]/g) || []).length
+    if (staleCount > 0) {
+      const n = staleCount
       console.log('  ⚠️ **有 ' + n + ' 处"生成物陈旧"** —— 源比产物新，即**改了源还没重新生成**。')
       console.log('     ⇒ **你现在发布的产物里，不包含你刚改的那部分。**')
       console.log('     ⇒ 正确顺序：**先跑 `node _finish.cjs`**（它会生成），再跑本脚本。')
