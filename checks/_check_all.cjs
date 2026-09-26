@@ -1,7 +1,7 @@
 // 统一检查入口 —— 一条命令跑完全部断言
 // 解决 X-05：断言全靠手动跑，我这一会话已多次违反（建了 `_check_counts.cjs` 没进流程 ⇒ 手写计数写错）。
 // 用法: node _check_all.cjs [--fast]
-//   --fast  跳过需要联网的检查（_refresh_snapshots）
+//   --fast  跳过往「慢」或「需要联网」的检查（只读断言 / 访客视角 / 快照复查）
 // 退出码: 0=全部通过  1=有任一检查未通过
 //
 // ★★ 2026-09-25 修掉的一个**静默失效**（本文件自己犯的、也是本书反复记的那一类）：
@@ -55,7 +55,7 @@ const fast = process.argv.includes('--fast')
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log('用法: node _check_all.cjs [--fast] [--target <配置文件>]')
     console.log('')
-    console.log('  --fast              跳过需要联网的检查（快照复查）')
+    console.log('  --fast              跳过慢的或需要联网的检查（只读断言 / 访客视角 / 快照复查）')
     console.log('  --target <文件>     用指定的目标配置（不传则用本仓库默认布局）')
     console.log('')
     console.log('  ⚠️ **参数拼错会直接报错**，不会静默回落到示例工程 ——')
@@ -197,6 +197,11 @@ const CHECKS = [
   //     ⇒ 同时验了"推送到位"与"访客能跑"两件事。
   //   ⚠️ 它要**联网 clone**（几十秒）⇒ 第 4 个元素为 `true`（`--fast` 时跳过），与「快照复查」同类。
   ['访客视角', '_check_remote_visitor.cjs', [], true],
+  // ★ 「只读」断言（第 69 轮建）—— 跑了整套检查之后，被检查的工程**一个字节都没变**。
+  //   它是「断言层只读」这条承诺的证据：算哈希 → 跑一遍统一入口（内层用环境变量跳过本项，防递归）→ 再算哈希 → 比。
+  //   ⚠️ **它是「按需」项**：要跑两遍哈希 + 一次完整内层（约 25 秒）⇒ 与「访客视角」「快照复查」同类。
+  //   而第 4 个元素的语义因此**扩了一点**：它原来是"需要联网"，现在读作**"慢或需要联网 ⇒ --fast 跳过"**。
+  ['只读断言', '_check_readonly.cjs', [], true],
   ['快照复查', '_refresh_snapshots.cjs', [], true],
 ].filter(c => !(_CFG.t.skipBudgetCheck && c[0] === '预算闸门'))
   // ★ 参数里含 null（＝自定义目标下未配置）⇒ **标记为跳过，而不是把整项从列表里删掉**。
@@ -206,7 +211,7 @@ const CHECKS = [
     ? [...c, '参数未配置（自定义目标模式下不回落默认布局）'] : c))
 
 const results = []
-console.log('=== 统一检查入口 ===' + (fast ? '（--fast：跳过联网检查）' : ''))
+console.log('=== 统一检查入口 ===' + (fast ? '（--fast：跳过慢的与联网检查）' : ''))
 console.log('')
 
 for (const [name, script, args, needsNet, skip] of CHECKS) {
