@@ -30,6 +30,13 @@ function walk(dir, out = []) {
     //   ★ 这套前缀与 `_check_ps_syntax.cjs` / `_check_text_hygiene.cjs` 保持一致。
     if (e.name.startsWith('.') || e.name === 'node_modules') continue
     if (/^(_回退点|_沙箱|_sandbox|_开荒测试|_复现测试|_clone测试|_fakebin|\.build-|\.tmp-|\.oss-clean)/.test(e.name)) continue
+    // ★★ 2026-09-26 第 66 轮加：**跳过两类"不是我们正文"的目录** —— 实测它们制造了 200+ 条误报。
+    //   ① `unpacked` / `dl`（都在 `_research\*_工具\` 下）：那是**解包出来的第三方 npm 包**，
+    //      里面是**别人的 README**（dsh-better-sidebar / dsh-pet / agent-teams …），
+    //      它们的链接指向**包内**路径（`docs/plans/…`、`./AGENTS.md`）⇒ 在我们这里当然不存在。
+    //      **改写别人的 README 是错的，把它当"待检查的正文"也是错的。**
+    //   ② 判据与 `_check_ps_syntax.cjs` / `_check_text_hygiene.cjs` 保持同一套前缀纪律。
+    if (/^(unpacked|dl)$/.test(e.name)) continue
     const p = path.join(dir, e.name)
     if (e.isDirectory()) walk(p, out)
     else if (e.name.endsWith('.md')) out.push(p)
@@ -63,7 +70,7 @@ for (const f of files) {
   byBase.get(b).push({ file: f, lines: n })
 }
 
-let problems = 0, checked = 0
+let problems = 0, checked = 0, checked3 = 0
 const report = []
 
 for (const f of files) {
@@ -74,6 +81,12 @@ for (const f of files) {
   const declaresConvention = /文件简称约定/.test(text)
   // 核验方产物 ⇒ 歧义检查豁免（理由见上方 EVIDENCE_FILES 注释）
   const evidence = isEvidence(f)
+    // ★★ 2026-09-26 第 66 轮加：**`_public_src/` 不参与"markdown 链接"这一模式**。
+    //   理由：`_public_src/` 是**扁平**的（`配置说明.md` 就在根下），而 README 里的链接是按
+    //   **产物布局**写的（`docs/配置说明.md`）—— 源与产物的**目录布局本来就不同**。
+    //   ⇒ 按源目录解析必然全错（实测 28 条全误报）；而**产物 `public/` 会被照常检查**，
+    //     且"源改了没重新生成"由「生成物陈旧」那一项单独守着 ⇒ **覆盖面没有损失。**
+    const skipLinks = /[\\\/]_public_src[\\\/]/.test(f)
   lines.forEach((ln, i) => {
     // 带理由的豁免：该行若含 `check-refs:ignore`，跳过检查。
     // ⚠️ 豁免必须**在行内写明理由**，使豁免本身可审计 —— 这是"压告警"与"标注已知假阳性"的区别。
@@ -118,11 +131,36 @@ for (const f of files) {
         }
       }
     }
+    // ── 模式三：**markdown 链接**（2026-09-26 第 66 轮加）────────────────────────────
+    //   ★ 起因：README 里的文件名原本全用反引号写（`配置说明.md`）—— 访客**点不动**，
+    //     得自己去 `docs/` 里找。第 66 轮把 **28 处**转成了真链接 ⇒ 链接从 2 条变成 **30 条**。
+    //   ⇒ **那它们就该有人守着"指向的文件在不在"** —— 链接错 = 访客一点就 404，
+    //     而那正是"步骤少"最直接的反面。
+    //   ★ 只查**文件存在性**，不查锚点（`#section`）：
+    //     锚点错只会跳到页首、**不会 404**，优先级低一档；而它的判据要复刻平台的 slug 算法，
+    //     复刻错了会误报 —— **按"误报比漏报更糟"，先不做，并把这个边界写进下面的"已知边界"。**
+    {
+      if (skipLinks) return
+      const re3 = /\[([^\]]*)\]\(([^)\s]+)\)/g
+      while ((m = re3.exec(ln)) !== null) {
+        const href = m[2]
+        if (/^(https?:|mailto:|#)/.test(href)) continue
+        const rel = href.split('#')[0]
+        if (!rel) continue
+        checked3++
+        const abs = path.resolve(path.dirname(f), decodeURIComponent(rel))
+        if (!fs.existsSync(abs)) {
+          report.push({ f, line: i + 1, kind: '链接指向的文件不存在',
+            detail: '`' + href + '`（链接文字：' + m[1].slice(0, 40) + '）' })
+          problems++
+        }
+      }
+    }
   })
 }
 
 console.log('=== 死引用 / 歧义引用检查 ===')
-console.log('扫描 .md 文件：' + files.length + ' 个    解析到文件+行号引用：' + checked + ' 处')
+console.log('扫描 .md 文件：' + files.length + ' 个    解析到文件+行号引用：' + checked + ' 处    markdown 链接：' + checked3 + ' 条')
 console.log('')
 if (!report.length) console.log('✅ 未发现悬空或歧义引用')
 else {
@@ -134,6 +172,7 @@ else {
 console.log('')
 console.log('⚠️ 已知边界：')
 console.log('  · **歧义引用检查可靠**（短名 `02` 等有歧义，必须写全名）。')
+console.log('  · **markdown 链接检查只查文件存在性**，不查锚点（`#section`）—— 锚点错只会跳到页首，不会 404。')
 console.log('  · **悬空引用检查有假阳性**：文本上无法区分「引用」与「描述一个引用」')
 console.log('    （例如复核报告里写的"裁定引的 L336 不存在"会被当成活引用）。**该类别须人工判断。**')
 console.log('')
