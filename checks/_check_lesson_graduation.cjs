@@ -179,7 +179,15 @@ if (overQuota.length) {
   const selfOver = overQuota.filter(o => SELF && o.sess === SELF)
   const otherOver = overQuota.filter(o => !(SELF && o.sess === SELF))
   for (const o of overQuota) {
-    const who = (SELF && o.sess === SELF) ? '**本会话**' : '其他会话'
+    // ★★ 2026-09-26 第 59 轮修（一个**真的误导了我**的假提示）：
+    //   原来 `SELF` 取自 `ledger.selfSession`，而**账本里根本没有这个键** ⇒ `SELF = null`
+    //   ⇒ 这一行的三元判断恒走 else ⇒ **每一条欠账都被写成「其他会话」**，
+    //   而下面第 190 行还会**无条件**打印「本会话 0 欠账」。
+    //   ⇒ 后果实测：我照它写进了收尾报告（"那 2 条不是我产生的"），**而其中一条是我当天写的。**
+    //   ★ 错法值得记：**当它"不知道"时，它没有说不知道，而是自信地说"没有"。**
+    //     这与本工作区既有的那条纪律正相反 ——「查不到就说查不到，永不报『已最新』」。
+    //   ⇒ 修法：取不到就如实说**归属未知**，绝不猜。
+    const who = SELF ? (o.sess === SELF ? '**本会话**' : '其他会话') : '**归属未知**'
     const dir = o.list.length > o.q ? '增加' : '减少（账本未同步）'
     findings.push('【未分诊' + dir + '·' + who + '】会话 ' + o.sess.slice(0, 22) + '… 未分诊 **' + o.list.length + '** 条（账本配额 ' + o.q + '）'
       + (o.list.length > o.q
@@ -187,7 +195,16 @@ if (overQuota.length) {
         : '。分诊掉了却没下调配额 —— 请把该会话的配额改成 ' + o.list.length + '。'))
   }
   if (selfOver.length) findings.push('【归属提示】**其中 ' + selfOver.length + ' 组是本会话的** —— 这部分该由本会话当天分诊，不能推给后来人。')
-  if (otherOver.length && !selfOver.length) findings.push('【归属提示】本次红灯**全部来自其他会话**（本会话 0 欠账）—— 按既有约定，别人的欠账不该算成本会话的失职；修法见 backlogBySession。')
+  if (otherOver.length && !selfOver.length) {
+    if (!SELF) {
+      // ★ 不知道就说不知道（第 59 轮）：不许把"我判不了"说成"不是我的"。
+      findings.push('【归属未知】账本里没有 `selfSession`，**我无法判断这些欠账属于哪个会话** —— '
+        + '**不要据此认为"不是本会话的"**（这一行原来会无条件打印「本会话 0 欠账」，实测误导过一次）。'
+        + '要分开报：在账本顶层写 `"selfSession": "<你的 session-id>"`。')
+    } else {
+      findings.push('【归属提示】本次红灯**全部来自其他会话**（本会话 0 欠账）—— 按既有约定，别人的欠账不该算成本会话的失职；修法见 backlogBySession。')
+    }
+  }
 }
 
 // ── 输出 ────────────────────────────────────────────────────────────────────
@@ -196,7 +213,18 @@ console.log('记忆毕业断言（每条 active lesson 必须有归宿）')
 console.log('  记忆库 active lesson：' + ACTIVE.size + ' 条')
 console.log('  归宿分布：断言 ' + n('assertions') + ' ｜ 部分 ' + n('partial') + ' ｜ 外部复核 ' + n('external')
   + ' ｜ 领域事实 ' + n('domain') + ' ｜ 书面豁免 ' + n('waived'))
-console.log('  未分诊：' + untriaged.length + ' 条（账本 backlogMax=' + ledger.backlogMax + '）')
+// ★★ 2026-09-26 第 59 轮修（与「归属未知」同族的一个显示问题）：
+//   原来这一行印 `backlogMax`，而那是 **v1 时代的「单一全局数字」** ——
+//   自第 49 轮改成**按会话分别记账**之后，它**已经不是判据**了（牙齿在 backlogBySession）。
+//   ⇒ 后果：实测打印出「未分诊 86 条（账本 backlogMax=87）」**然后报 ✅ 通过** ——
+//     两个数字对不上却绿着，读的人（包括我自己）会以为"是不是漏掉了 1 条"。
+//   ★ 与「归属未知」是同一族：**输出的字必须与结论一致**，对不上就要说清为什么。
+const sessSum = [...bySession.values()].reduce((a, l) => a + l.length, 0)
+console.log('  未分诊：' + untriaged.length + ' 条（按会话记账：' + bySession.size + ' 个会话，合计 ' + sessSum + '）')
+if (untriaged.length !== ledger.backlogMax) {
+  console.log('     （注：账本里那个历史数字 `backlogMax=' + ledger.backlogMax + '` **已不是判据** —— '
+    + '第 49 轮起改为**按会话分别记账**，两者对不上是正常的。）')
+}
 console.log('  统一入口可用的断言脚本：' + IN_CHECKS.size + ' 个')
 if (onDemand.length) {
   console.log('  按需落点 ' + onDemand.length + ' 处（**不在每次必跑路径上**，已在账本显式声明理由）：'
