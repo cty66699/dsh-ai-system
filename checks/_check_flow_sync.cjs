@@ -67,6 +67,47 @@ if (missingScripts.length) {
   findings.push(`【工具不在流程里】以下断言已进统一入口，但流程文档全文未提 —— ${missingScripts.join('、')}`)
 }
 
+// ── ①a 「孤儿脚本」：`核查/` 下的断言脚本，必须在 CHECKS 里、或带理由豁免 ────────────
+//   ★ 缺口（2026-09-26 第 69 轮**实测**）：上面那条判据查的是「**已进统一入口**的脚本，
+//     流程文档里提到没有」—— 而**反方向那一半没人管**：
+//     **`核查/` 下有个 `_check_*.cjs`、而它根本没进 CHECKS**。
+//     实测证据：本轮新建 `_check_readonly.cjs` 之后跑统一入口 ⇒ **21/21 全绿、没有任何东西报它**。
+//   ★ 而本项目历史上「建了工具没进流程」**已犯 8 次** —— 那 8 次都是"进了 CHECKS 而文档没提"，
+//     **"根本没进 CHECKS"这个方向，一次都没被覆盖过。**
+//   ★ 豁免必须**带理由**（禁止静默豁免 —— 与治理规则第 8 条同一纪律）。
+const ORPHAN_EXEMPT = {
+  '_check_all.cjs': '统一入口自身（它跑别人，不跑自己）',
+  '_paths.cjs': '共享层（被各检查 require，不是独立断言）',
+  '_build_public_docs.cjs': '生成器（由 `_finish.cjs` 的步骤 2 调用，不在 CHECKS 里）',
+  '_calibrate.cjs': '量具校准 —— 它不是"检查产物"，是"校准读数用的尺子"（按需跑）',
+  '_check_readonly.cjs': '★ 第 69 轮新建：它自己要**调一遍统一入口**，必须排除在 CHECKS 之外（否则递归）；24 秒，按需跑',
+  '_finish.cjs': '收尾入口 —— 它**调**统一入口（不是被它跑的一项）；已写进 AGENTS.md 第五节',
+  '_publish.cjs': '发布入口 —— 提交 + 推送 + 复核（不是被统一入口跑的一项）；已写进 AGENTS.md 第五节',
+}
+{
+  const checkDir = path.dirname(CHECK_ALL)
+  const inChecks = new Set(scripts)
+  const seen = []
+  const orphan = []
+  for (const e of fs.readdirSync(checkDir, { withFileTypes: true })) {
+    if (!e.isFile() || !/\.cjs$/.test(e.name)) continue
+    const n = e.name
+    // 只管"看起来是一个检查/入口"的那些（`_` 开头的自有脚本）
+    if (!/^_(check_|finish|publish|build_|calibrate)/.test(n)) continue
+    seen.push(n)
+    if (inChecks.has(n) || ORPHAN_EXEMPT[n]) continue
+    orphan.push(n)
+  }
+  if (seen.length === 0) die('在 `核查/` 下一个自有脚本都没扫到 —— 判据坏了')
+  console.log('  ①a 孤儿脚本：`核查/` 下自有脚本 ' + seen.length + ' 个 —— '
+    + inChecks.size + ' 个在 CHECKS、' + Object.keys(ORPHAN_EXEMPT).filter(k => seen.includes(k)).length + ' 个带理由豁免'
+    + (orphan.length ? '、**' + orphan.length + ' 个孤儿**' : '、**0 个孤儿**'))
+  if (orphan.length) {
+    findings.push(`【孤儿脚本】以下断言在 \`核查/\` 下，但**既不在统一入口的 CHECKS 里、也没有书面豁免** —— `
+      + orphan.join('、') + '（⇒ 三条出路：① 加进 CHECKS；② 在 ORPHAN_EXEMPT 里写清为什么它不该进；'
+      + '③ **它已经没用了 ⇒ 删掉** —— 一次性诊断脚本用完就该走，别留着当孤儿）')
+  }
+}
 // ── ①b 项数一致性（2026-09-26 加，防「改了代码没同步文档」第 4 次复发）────────
 // ★ 为什么必须机械化：这个错当天犯了 **4 次**（`--fast` 被包成必须带、`guide` 跳过粒度、
 //   Node 22.5 vs 22.19、**加了「文本卫生」但四处文档仍写"十六项"、示例输出仍写"7 / 7"**）。
