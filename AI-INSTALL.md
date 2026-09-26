@@ -101,7 +101,7 @@ $dshCmd = Get-Command dsh -ErrorAction SilentlyContinue
 
 ```powershell
 "DSH_HOME 存在=" + (Test-Path "$env:USERPROFILE\.dsh")
-"已有 profile=" + ((Get-ChildItem "$env:USERPROFILE\.dsh\profiles" -Directory -EA SilentlyContinue).Name -join ',')
+"已有 profile=" + ((Get-ChildItem "$env:USERPROFILE\.dsh\profiles" -Directory -EA SilentlyContinue | Where-Object { $_.Name -ne 'node_modules' }).Name -join ',')
 "已有 dsh 版本=" + (((& dsh --version 2>&1) | Where-Object { $_ -notmatch 'UNDICI|trace-warnings' }) -join '')
 > ★ 2026-09-26 修（访客报告 F7）：这里原来没过滤噪声 —— 实测会打出
 > `(node:32232) [UNDICI-EHPA] Warning: …0.1.7-rc.2`，而**下面判定要求精确比对版本**。
@@ -145,6 +145,18 @@ dsh plugin --profile web list        # ★ 若你的 profile 不叫 web，换成
 > **★ 这不是"脚本有 bug"，而是"这个决定必须由人来做"。**
 > 一个守规矩的 AI 如果在这里无条件"继续"，就会**合规地改掉使用者的生产环境** ——
 > 所以这一支必须**停下问**，不能靠"版本相同"就放行。
+>
+> **★ 无人值守时怎么办（2026-09-26 补 —— 一个陌生人演练时发现的缝隙）**：
+> 本文第 0 条说"无人值守就写 `TODO(未定)` 继续往下做"，而**这一支不能照那句办** ——
+> **继续 = 改掉他正在用的 profile。**
+> **⇒ 无人值守时的正确动作是「换一个 profile 装，不碰他那个」**：
+> ```powershell
+> powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -Profile dsh-new
+> ```
+> 然后**在报告里写清**：「你在 `web` profile 上有一套在用的体系（打上那几行 ⚠️），
+> 我没有动它 —— 我把这套装到了新的 `dsh-new` profile。
+> 想合并进 `web`，你自己跑一次 `install.ps1 -Profile web -Force`（**它会就地改写并留 .bak**）。」
+> **⇒ 一句话**：**问不出来时，"装到别处"永远比"照装下去"安全**（两者都完成了任务，而只有一个会破坏东西）。
 
 **紧接着定工作区位置**（**必须问使用者**）：
 
@@ -194,6 +206,20 @@ powershell -ExecutionPolicy Bypass -File deploy\install.ps1 -DryRun -WorkDir <�
 > 与 **`package.json`**（`dsh plugin add` 会写 dependencies 与 bundles）。
 > **动手前，脚本会给这两个文件各存一份带时间戳的副本**（`<原名>.bak-YYYYMMDD-HHMMSS`）——
 > **改坏了可以用它退回去。** 报告里请把这两个备份文件名带上（使用者可能要用）。
+>
+> **★ 怎么退回去（2026-09-26 补 —— 此前只说了"有备份"，没说"怎么用"）**：
+> 那两个 `.bak-YYYYMMDD-HHMMSS` 是**整份原文件**，退回就是**把它们复制回去再重启**：
+> ```powershell
+> $P = "$env:USERPROFILE\.dsh\profiles\web"
+> Copy-Item "$P\pnpm-workspace.yaml.bak-<时间戳>" "$P\pnpm-workspace.yaml" -Force
+> Copy-Item "$P\package.json.bak-<时间戳>"        "$P\package.json"        -Force
+> # 然后重启 DSH
+> ```
+> **★ 但有一件事备份救不了**：**已经装进去的包**（备份只管那两个配置文件，不管 `node_modules`）。
+> ⇒ 所以**真装中途失败**时，profile 会停在**半迁移态**：配置已改、包没装齐。
+> **遇到这种情况**：① 先按上面把两个配置文件退回去；② 再**重跑一次 `install.ps1`**（它会把包补齐）；
+> ③ 两次都不行才考虑重装。**别只做①就以为好了** —— 配置退了而包还在，是另一种不一致。
+> **⇒ 所以报告里必须带上那两个备份文件名**（使用者要退的时候找得到它们）。
 >
 > **它不会删你的东西**：不删文件、不删插件、不动工作区里的数据。
 > **但版本会被它的清单顶住**：`overrides` 是 workspace 级生效的 —— 你手上如果有更新的版本，
