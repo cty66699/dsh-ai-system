@@ -103,12 +103,39 @@ console.log('  本地公开仓：通过 ' + localR.pass + ' / ' + localR.total +
 
 // ── ② 远端读数（访客）───────────────────────────────────────────────────────
 const REPO = path.join(TMP, 'repo')
-const c = run('git', ['-c', 'core.autocrlf=false', 'clone', '-q', '--depth', '1', REMOTE, REPO], TMP, 600000)
+// ★★★ 2026-09-26 修（第 57 轮）：**clone 要重试** —— 实测栽过一次。
+//   现场：`git push` 与 `git clone` **同一天各失败一次**，报错都是
+//     `Connection reset by 20.205.243.160 port 443` + `Could not read from remote repository`
+//     + **`Please make sure you have the correct access rights and the repository exists`** ——
+//   而那条报错**会把人引向错误方向**（"是不是 key 过期了 / 仓库没了？"）；
+//   `ssh -T git@ssh.github.com` 当场证明**认证完全正常**，**重试一次就成功了。**
+//   ⇒ 所以：**网络抖动必须在脚本里被吸收**，而不是让"访客能不能跑"这一项假红。
+//   ⇒ 判据：**"读取失败"与"读到了但不对"是两件事** —— 前者值得重试，后者不该。
+const cloneTry = (n) => {
+  for (let i = 1; i <= n; i++) {
+    const r = run('git', ['-c', 'core.autocrlf=false', 'clone', '-q', '--depth', '1', REMOTE, REPO], TMP, 600000)
+    if (r.code === 0) return r
+    if (i < n) {
+      const transient = /Connection reset|Could not read from remote|timed out|TLS|EOF|broken pipe/i.test(r.out)
+      console.log('      ↳ 第 ' + i + ' 次 clone 失败（' + (transient ? '**像是网络抖动**' : '非网络原因') + '），3 秒后重试…')
+      if (!transient) return r          // **不是网络问题就别重试**（重试只会拖长等待）
+      try { require('node:child_process').execFileSync('sleep', ['3']) } catch { /* Windows 无 sleep，用下面这行 */ }
+      const until = Date.now() + 3000
+      while (Date.now() < until) { /* 忙等 3 秒（本脚本不在热路径上） */ }
+    }
+    if (i === n) return r
+  }
+  return { code: 99, out: '(clone 未执行)' }
+}
+const c = cloneTry(3)
 if (c.code !== 0) {
   console.error('')
   console.error('❌ **clone 失败**（exit ' + c.code + '）—— 访客第一步就卡住了。')
   console.error(c.out.split('\n').slice(-8).join('\n'))
   console.error('   ⇒ 那意味着：**"别人拿得到"这一条不成立。**')
+  console.error('   ⚠️ 但**先看报错是不是网络**（`Connection reset` / `Could not read from remote`）：')
+  console.error('      那类错误**会附带一句误导**（"check your access rights and the repository exists"）——')
+  console.error('      而 `ssh -T git@ssh.github.com` 能当场证明认证是否正常。**网络抖动重试即可。**')
   if (!KEEP) fs.rmSync(TMP, { recursive: true, force: true })
   else console.log('   （--keep：临时目录留在 ' + TMP + '）')
   process.exit(1)
