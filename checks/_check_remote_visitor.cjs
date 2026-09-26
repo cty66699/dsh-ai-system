@@ -111,12 +111,36 @@ const REPO = path.join(TMP, 'repo')
 //   `ssh -T git@ssh.github.com` 当场证明**认证完全正常**，**重试一次就成功了。**
 //   ⇒ 所以：**网络抖动必须在脚本里被吸收**，而不是让"访客能不能跑"这一项假红。
 //   ⇒ 判据：**"读取失败"与"读到了但不对"是两件事** —— 前者值得重试，后者不该。
+  // ★★ 2026-09-26 第 71 轮修（**它自己跑崩的那次**）：`force: true` **只忽略"不存在"，不忽略 `EBUSY`** ——
+  //   实测：clone 失败后 Git 进程可能还占着那个目录 ⇒ `rmSync` 抛 `EBUSY: resource busy or locked` ⇒
+  //   **整个脚本以未捕获异常结束**（连"clone 失败"那句结论都没打印完）。
+  //   ⇒ 清理失败绝不该让脚本崩 —— 它是收尾动作，而**结论已经产出了**。改成"带重试 + 失败就说明"。
+  const cleanup = (dir, tries = 3) => {
+    for (let k = 1; k <= tries; k++) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); return true }
+      catch (e) {
+        if (k === tries) {
+          console.error('   ⚠️ 临时目录没能删掉（' + (e.code || e.message) + '）：' + dir)
+          console.error('      ⇒ **这不影响上面的结论** —— 你可以稍后手工删它（多半是 Git 进程还占着）。')
+          return false
+        }
+        // 等一下再试（Windows 上文件锁释放有延迟）
+        try { require('node:child_process').execFileSync(process.execPath, ['-e', 'setTimeout(()=>{},1500)']) } catch { /* 忽略 */ }
+      }
+    }
+    return false
+  }
 const cloneTry = (n) => {
   for (let i = 1; i <= n; i++) {
     const r = run('git', ['-c', 'core.autocrlf=false', 'clone', '-q', '--depth', '1', REMOTE, REPO], TMP, 600000)
     if (r.code === 0) return r
     if (i < n) {
-      const transient = /Connection reset|Could not read from remote|timed out|TLS|EOF|broken pipe/i.test(r.out)
+        // ★★ 2026-09-26 第 71 轮加宽：原来只看**报错的文字**。而实测有一次 clone 失败时
+  //   `r.out` 里**一条标准网络错都没有**（于是被判断成「非网络原因」），
+  //   而**手跑同一条命令却立刻成功** ⇒ 那次确实是抖动，只是 git 没吐标准措辞。
+  //   ⇒ 判据补一条：**「连退出码都没拿到」也算可疑**（99 是本脚本的哨兵：进程被杀 / EPERM / 超时）。
+  const transient = /Connection reset|Could not read from remote|timed out|TLS|EOF|broken pipe/i.test(r.out)
+    || r.code === 99
       console.log('      ↳ 第 ' + i + ' 次 clone 失败（' + (transient ? '**像是网络抖动**' : '非网络原因') + '），3 秒后重试…')
       if (!transient) return r          // **不是网络问题就别重试**（重试只会拖长等待）
       try { require('node:child_process').execFileSync('sleep', ['3']) } catch { /* Windows 无 sleep，用下面这行 */ }
@@ -136,7 +160,7 @@ if (c.code !== 0) {
   console.error('   ⚠️ 但**先看报错是不是网络**（`Connection reset` / `Could not read from remote`）：')
   console.error('      那类错误**会附带一句误导**（"check your access rights and the repository exists"）——')
   console.error('      而 `ssh -T git@ssh.github.com` 能当场证明认证是否正常。**网络抖动重试即可。**')
-  if (!KEEP) fs.rmSync(TMP, { recursive: true, force: true })
+  if (!KEEP) cleanup(TMP)
   else console.log('   （--keep：临时目录留在 ' + TMP + '）')
   process.exit(1)
 }
@@ -162,7 +186,7 @@ if (sha !== localSha) {
     + '` ⇒ **有东西没推**（或推的不是这个分支）。')
 }
 
-if (!KEEP) fs.rmSync(TMP, { recursive: true, force: true })
+if (!KEEP) cleanup(TMP)
 
 console.log('')
 console.log('—'.repeat(50))
