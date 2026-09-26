@@ -81,6 +81,37 @@ console.log('▶ 发布（提交 + 推送；**提交信息由人写**）')
 console.log('  仓库：' + REPO)
 console.log('')
 
+// ── ★★ 第 61 轮加：**先看"改了源忘了生成"没有** ──────────────────────────────
+//   起因是我自己刚犯的一次：改了 `_public_src/AI-INSTALL.md` 就直接跑本脚本 ——
+//   而本脚本只看 `public/` 有没有改动 ⇒ 它**安安静静地只提交了另一个文件**，
+//   我那一处改动要等到**下一次**生成才会进产物。
+//   ⇒ 那正是 `_finish.cjs` 存在的理由（"改了源就得先生成再复跑"），
+//     而**本脚本是独立入口，不会自动走那条链** ⇒ 这道守卫补的就是那个缝。
+//   ★ 判据从 `_check_text_hygiene.cjs` 拿（它读 `_public_map.json`，覆盖全部产物）——
+//     **不在这里重写一遍"哪些源对应哪些产物"**（那会立刻变成又一份会漂移的清单）。
+//   ★ 只**提醒**、不**拦住**：合法场景是存在的（例如"我只想提交已经生成的产物"）。
+{
+  const hygiene = path.join(HERE, '_check_text_hygiene.cjs')
+  if (fs.existsSync(hygiene)) {
+    const log = path.join(TMP, 'stale.txt')
+    const fd = fs.openSync(log, 'w')
+    let code = 0
+    try { execFileSync(process.execPath, [hygiene], { cwd: HERE, stdio: ['ignore', fd, fd], timeout: 300000 }) }
+    catch (e) { code = (typeof e.status === 'number' ? e.status : 99) }
+    fs.closeSync(fd)
+    const out = fs.readFileSync(log, 'utf8')
+    if (/生成物陈旧/.test(out)) {
+      const n = (out.match(/\[生成物陈旧\]/g) || []).length
+      console.log('  ⚠️ **有 ' + n + ' 处"生成物陈旧"** —— 源比产物新，即**改了源还没重新生成**。')
+      console.log('     ⇒ **你现在发布的产物里，不包含你刚改的那部分。**')
+      console.log('     ⇒ 正确顺序：**先跑 `node _finish.cjs`**（它会生成），再跑本脚本。')
+      console.log('     ⇒ 若你确实只想提交现有产物，忽略这条即可（它只是提醒，不拦你）。')
+      console.log('')
+    }
+    try { fs.rmSync(log, { force: true }) } catch { /* 忽略 */ }
+  }
+}
+
 // ── ① 有什么要提交 ──────────────────────────────────────────────────────────
 const st = git(['status', '--porcelain'])
 const dirty = st.out ? st.out.split('\n').filter(Boolean) : []
