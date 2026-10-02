@@ -85,6 +85,8 @@ if (cfgPath) cfgPath = path.resolve(cfgPath)
     usingCustomTarget: Object.keys(t).length > 0,
     ROOT,
     t: {
+      // 保留“是否显式配置”的信号：只读断言与语法门据此决定能否检查仓库根。
+      repoRoot: t.repoRoot ? ROOT : null,
       declaration: R(t.declaration, P('方案设计', '00_总览与共性技术底座.md')),
       product: R(t.product, P('方案设计', '02_任务二_（未发表项目）.md')),
       conformanceMap: R(t.conformanceMap, path.join(HERE, '_conformance_map.json')),
@@ -132,6 +134,7 @@ if (cfgPath) cfgPath = path.resolve(cfgPath)
       dispositionScanDirs: t.dispositionScanDirs ? t.dispositionScanDirs.map(d => R(d, null)).filter(Boolean) : null,
       publishTargets: t.publishTargets ? t.publishTargets.map(d => R(d, null)).filter(Boolean) : null,
       budgetLedger: R(t.budgetLedger, null),
+      budgetPrices: R(t.budgetPrices, null),
       skipBudgetCheck: t.budgetLedger === null,
       // `verify.file` 的基准：默认 = 仓库根（与既有行为一致）；自定义目标下可用 `verifyBase` 显式指定。
       //   ⚠️ 这一项**不参与"未配置即跳过"** —— 它只是一个目录常量，不是工程文件。
@@ -141,6 +144,15 @@ if (cfgPath) cfgPath = path.resolve(cfgPath)
 }
 
 module.exports = {
+  // 覆盖矩阵复用各检查自己的文件选择，不再另造一组近似谓词。
+  emitFileList(files) {
+    if (!process.argv.includes('--list-files')) return
+    const readable = [...new Set(files.map(file => path.resolve(file)))].filter(file => {
+      try { fs.accessSync(file, fs.constants.R_OK); return fs.statSync(file).isFile() } catch { return false }
+    })
+    console.log('DSH_FILE_LIST ' + JSON.stringify(readable))
+    process.exit(0)
+  },
   load,
   // 供各脚本一行接入：所需路径若在自定义目标下未配置 ⇒ 打印并 **exit 3（跳过）**，
   // 由 `_check_all.cjs` 识别为 ⏭️（而不是 ✅ 通过 —— 那会把"没查"显示成"查过了"）。

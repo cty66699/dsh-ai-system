@@ -3,7 +3,7 @@
 // 用法:
 //   node _publish_audit.cjs                  → 扫描默认候选开源集
 //   node _publish_audit.cjs <路径> [<路径>…]  → 扫描指定路径（文件或目录）
-// 退出码: 0=可发布  1=发现敏感内容，**禁止发布**
+// 退出码: 0=未命中  1=BLOCK 命中或 WARN 待人工判读，**禁止自动发布**
 //
 // ⚠️ 本脚本只打印「文件名 + 命中数 + 模式类别」，**绝不打印命中内容本身**（避免把敏感数据写进日志/对话）。
 const fs = require('node:fs')
@@ -74,7 +74,8 @@ function collect(t) {
   return out
 }
 
-const targets = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_TARGETS
+const positionalTargets = process.argv.slice(2).filter(arg => arg !== '--list-files')
+const targets = positionalTargets.length ? positionalTargets : DEFAULT_TARGETS
 
 // 显式点名内部件 ⇒ 硬拦（不是在扫描里放过它，而是判定"你正在试图发布内部件"）
 const explicitlyInternal = targets
@@ -83,6 +84,7 @@ const explicitlyInternal = targets
 
 const files = [...new Set(targets.flatMap(t => collect(path.resolve(t))))]
   .filter(f => !internalAbs.has(f.toLowerCase()))
+require('./_paths.cjs').emitFileList(files)
 
 // ★ 扫了个空 ≠ 干净：待发布集为空时，「未命中任何敏感模式」是句废话。
 //   实测（2026-09-24）：干净副本里本项曾因为目标没透传、扫到 0 个文件而报 ✅。
@@ -139,4 +141,5 @@ console.log('  · 正则只能抓「形似」的东西，**抓不到语义级的
 console.log('  · **WARN 类不是"可以忽略"，是"必须人工逐条判断"** —— 例如中转站的倍率与缓存行为属内部信息，')
 console.log('    公开披露是否会给用户带来麻烦，超出脚本可判断的范围。')
 console.log('  · 因此：**脚本说通过 ≠ 可以发布。脚本说不通过 = 一定不能发布。**（单向可靠）')
-process.exit(block ? 1 : 0)
+if (warn) console.log('⚠️ WARN 待人工逐条判读；处理并重跑前，不得自动发布。')
+process.exit(block || warn ? 1 : 0)

@@ -61,7 +61,7 @@ if (typeof ledger.backlogMax !== 'number') die('账本缺少数字字段 `backlo
 
 // ── 读记忆库（只取所需字段，不整表 dump）────────────────────────────────────
 let sqlite
-try { sqlite = require('node:sqlite') } catch { die('本机 Node 没有 node:sqlite（需 ≥22.5）') }
+try { sqlite = require('node:sqlite') } catch { die('本机 Node 未能加载 node:sqlite；建议使用 Node 22.19+（22.x）或 24+，旧版 22.x 可能需要实验开关') }
 let rows
 const SESSION_OF = new Map()   // id → 来源会话（按会话分别记账用）；必须在 try 之外，否则块作用域看不见
 try {

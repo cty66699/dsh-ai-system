@@ -80,7 +80,6 @@ const ORPHAN_EXEMPT = {
   '_paths.cjs': '共享层（被各检查 require，不是独立断言）',
   '_build_public_docs.cjs': '生成器（由 `_finish.cjs` 的步骤 2 调用，不在 CHECKS 里）',
   '_calibrate.cjs': '量具校准 —— 它不是"检查产物"，是"校准读数用的尺子"（按需跑）',
-  '_check_readonly.cjs': '★ 第 69 轮新建：它自己要**调一遍统一入口**，必须排除在 CHECKS 之外（否则递归）；24 秒，按需跑',
   '_finish.cjs': '收尾入口 —— 它**调**统一入口（不是被它跑的一项）；已写进 AGENTS.md 第五节',
   '_publish.cjs': '发布入口 —— 提交 + 推送 + 复核（不是被统一入口跑的一项）；已写进 AGENTS.md 第五节',
 }
@@ -425,6 +424,10 @@ const sec3 = agents.slice(agents.indexOf('## 三、治理规则'), agents.indexO
 const ruleCount = [...sec3.matchAll(/^\d+\.\s+\*\*/gm)].length
 if (ruleCount === 0) die('从 AGENTS.md §三 解析出 0 条治理规则 —— 格式可能已变')
 const cited = new Set()
+const rangeClaims = []
+// 范围总数是当前策略声明；历史审查与回退副本保留当时数字，不能拿来与今天对账。
+const currentRangeDocs = new Set([AGENTS, FLOW, _CFG.t.guide, _CFG.t.capabilityFile,
+  path.join(ROOT, 'README.md'), path.join(HERE, '_public_src', 'README.md')].filter(Boolean).map(p => path.resolve(p)))
 for (const dir of [ROOT, path.join(ROOT, '方案设计')]) {
   const walk = d => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
@@ -435,12 +438,18 @@ for (const dir of [ROOT, path.join(ROOT, '方案设计')]) {
       if (p === AGENTS) continue
       const t = readText(p)
       for (const m of t.matchAll(/治理规则第\s*(\d+)\s*条/g)) cited.add(Number(m[1]))
+      if (currentRangeDocs.has(path.resolve(p))) for (const m of t.matchAll(/治理规则\s*1\s*[–—\-~～]\s*(\d+)/g)) {
+        const upper = Number(m[1])
+        cited.add(upper)
+        if (upper !== ruleCount) rangeClaims.push(path.relative(ROOT, p) + '：1–' + upper)
+      }
     }
   }
   try { walk(dir) } catch { /* 忽略不可读目录 */ }
 }
 const badCite = [...cited].filter(n => n < 1 || n > ruleCount).sort((a, b) => a - b)
 if (badCite.length) findings.push(`【引用了不存在的规则】AGENTS.md §三 只有 ${ruleCount} 条治理规则，但全库引用了第 ${badCite.join('、')} 条`)
+if (rangeClaims.length) findings.push(`【治理规则范围过期】实际有 ${ruleCount} 条治理规则，以下完整范围声明不符：${[...new Set(rangeClaims)].join('、')}`)
 
 // ── ⑥ 「口径变更影响面」分层表必须覆盖全部正文文件 ──────────────────────────
 // 治什么：`00_总览` §5.1.2 把材料分成「内核（口径无关）/ 外壳（口径相关）」并据此算出

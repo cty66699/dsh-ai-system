@@ -33,6 +33,24 @@ function copyTree(src, dst) {
     if (e.isDirectory()) copyTree(a, b); else fs.copyFileSync(a, b)
   }
 }
+const pricedBudgetArgs = d => ['1', '4', '--ledger', path.join(d, '预算账本.json'), '--prices', path.join(d, '价格.json')]
+function tableFixture(d, header, rows) {
+  fs.writeFileSync(path.join(d, '裁定记录.md'), header + '\n' + rows.join('\n') + '\n')
+}
+function localScanFixture(d) {
+  const p = path.join(d, '_target.json'), cfg = JSON.parse(fs.readFileSync(p, 'utf8'))
+  Object.assign(cfg, { repoRoot: '.', publishTargets: ['.'], scanDirs: ['.'], textHygieneRoots: ['.'], hygieneRoots: ['.'], syntaxRoots: ['.'], psRoots: ['.'] })
+  fs.writeFileSync(p, JSON.stringify(cfg, null, 2))
+}
+function copyCheckFixture(d) {
+  const checks = path.join(d, 'checks'); fs.mkdirSync(checks)
+  for (const file of fs.readdirSync(HERE)) if (file.endsWith('.cjs')) fs.copyFileSync(path.join(HERE, file), path.join(checks, file))
+  for (const file of ['_check_provider_config.cjs', '_check_verify_profile.cjs', '_refresh_snapshots.cjs']) {
+    const stub = path.join(HERE, '_public_src', file)
+    if (fs.existsSync(stub)) fs.copyFileSync(stub, path.join(checks, file))
+  }
+  return checks
+}
 
 // 每个用例：{ 名, 断言脚本, 注入(目标目录)⇒改动 }
 const CASES = [
@@ -109,6 +127,8 @@ const CASES = [
     },
     probe: d => !('syntaxRoots' in JSON.parse(fs.readFileSync(path.join(d, '_target.json'), 'utf8'))),
     probeWhy: '确认配置里真的没有 syntaxRoots（否则这个用例什么也没证明）',
+    expectCode: 3,
+    expectOutput: /未配置：syntaxRoots/,
   },
   {
     name: '发现处置链路应该在清单解析出 0 条轨道时变红（而不是报"全部有处置"）',
@@ -260,8 +280,9 @@ const CASES = [
     //   ⇒ 造一条**逾期的 open**（记了好几轮还没做掉）。
     inject: d => {
       const led = {
+        round: 10,
         items: [
-          { id: 'C-1', status: 'open', what: '一条永远做不完的事', firstSeenRound: 4, lastSeenRound: 10, note: '从第 4 轮记到第 10 轮' },
+          { id: 'C-1', status: 'open', desc: '一条逾期未结的事', opened_round: 4 },
         ],
       }
       fs.writeFileSync(path.join(d, '结转账.json'), JSON.stringify(led, null, 2), 'utf8')
@@ -271,9 +292,11 @@ const CASES = [
       return Array.isArray(j.items) && j.items.length === 1 && j.items[0].status === 'open'
     },
     probeWhy: '确认账本里真的有一条 open 项（否则这个用例什么也没证明）',
+    expectCode: 1,
+    expectOutput: /欠账逾期/,
   },
   {
-    name: '文档漂移应该在"统一入口项数"对不上时变红',
+    name: '文档漂移：缺少治理规则时应报结构错误',
     script: '_check_flow_sync.cjs',
     // ★ 名单里的一员。它管的其中一件事是：文档里写的「N 项机械检查」必须等于真实项数。
     //   ⇒ 把文档里的项数改成一个**错的**（真实是 18，写 17）。
@@ -293,6 +316,8 @@ const CASES = [
       return s.includes('十七项机械检查')
     },
     probeWhy: '确认那句错的项数真的写进去了（否则这个用例什么也没证明）',
+    expectCode: 2,
+    expectOutput: /治理规则/,
   },
   {
     name: '预算闸门应该在"显式配了账本却不存在"时变红',
@@ -300,6 +325,124 @@ const CASES = [
     argsOf: d => ['--ledger', path.join(d, '根本没有这个账本.json')],
     inject: () => { /* 这个用例考的是参数 —— 它不需要改文件 */ },
     probe: () => true,
+    expectCode: 1,
+    expectOutput: /显式指定的账本不存在/,
+  },
+  {
+    name: '预算闸门：未知 provider 不能报可派发',
+    script: '_budget_check.cjs',
+    argsOf: d => ['--ledger', path.join(d, '预算账本.json')],
+    inject: d => {
+      const day = new Date()
+      const key = [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-')
+      fs.writeFileSync(path.join(d, '预算账本.json'), JSON.stringify({ sessions: { s1: { days: { [key]: { models: { 'unpriced/model': { inputTokens: 1000, outputTokens: 100 } } } } } } }), 'utf8')
+    },
+    probe: d => fs.readFileSync(path.join(d, '预算账本.json'), 'utf8').includes('unpriced/model'),
+    expectCode: 4,
+    expectOutput: /金额未知/,
+  },
+  {
+    name: '预算闸门：原型属性名不能冒充已定价 provider',
+    script: '_budget_check.cjs',
+    argsOf: d => ['--ledger', path.join(d, '预算账本.json')],
+    inject: d => {
+      const day = new Date()
+      const key = [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-')
+      fs.writeFileSync(path.join(d, '预算账本.json'), JSON.stringify({ sessions: { s1: { days: { [key]: { models: { 'constructor/model': { inputTokens: 1000 } } } } } } }), 'utf8')
+    },
+    probe: d => fs.readFileSync(path.join(d, '预算账本.json'), 'utf8').includes('constructor/model'),
+    expectCode: 4,
+    expectOutput: /金额未知/,
+  },
+  {
+    name: '预算闸门：补充价格后应按实际金额预警',
+    script: '_budget_check.cjs',
+    argsOf: pricedBudgetArgs,
+    inject: d => {
+      const day = new Date()
+      const key = [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-')
+      fs.writeFileSync(path.join(d, '预算账本.json'), JSON.stringify({ sessions: { s1: { days: { [key]: { models: { 'unpriced/model': { inputTokens: 1000000 } } } } } } }), 'utf8')
+      fs.writeFileSync(path.join(d, '价格.json'), JSON.stringify({ unpriced: { in: 2, cache: 0, out: 0 } }), 'utf8')
+    },
+    probe: d => fs.existsSync(path.join(d, '价格.json')) && fs.existsSync(path.join(d, '预算账本.json')),
+    expectCode: 1,
+    expectOutput: /合计 ≈ ¥2\.000[\s\S]*预警/,
+  },
+  {
+    name: '预算闸门：负 token 数不能被算成低消费',
+    script: '_budget_check.cjs',
+    argsOf: d => ['--ledger', path.join(d, '预算账本.json')],
+    inject: d => {
+      const day = new Date()
+      const key = [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-')
+      fs.writeFileSync(path.join(d, '预算账本.json'), JSON.stringify({ sessions: { s1: { days: { [key]: { models: { 'unpriced/model': { inputTokens: -1 } } } } } } }), 'utf8')
+    },
+    probe: d => fs.readFileSync(path.join(d, '预算账本.json'), 'utf8').includes('"inputTokens":-1'),
+    expectCode: 1,
+    expectOutput: /token 数无效/,
+  },
+  {
+    name: '预算闸门：只配置模型单价时也必须计价',
+    script: '_budget_check.cjs',
+    argsOf: pricedBudgetArgs,
+    inject: d => {
+      const day = new Date()
+      const key = [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-')
+      fs.writeFileSync(path.join(d, '预算账本.json'), JSON.stringify({ sessions: { s1: { days: { [key]: { models: { 'unpriced/model': { inputTokens: 1000000 } } } } } } }), 'utf8')
+      fs.writeFileSync(path.join(d, '价格.json'), JSON.stringify({ 'unpriced/model': { in: 2, cache: 0, out: 0 } }), 'utf8')
+    },
+    probe: d => fs.existsSync(path.join(d, '价格.json')),
+    expectCode: 1,
+    expectOutput: /合计 ≈ ¥2\.000[\s\S]*预警/,
+  },
+  {
+    name: '预算闸门：模型单价应优先于 provider 单价',
+    script: '_budget_check.cjs',
+    argsOf: pricedBudgetArgs,
+    inject: d => {
+      const day = new Date()
+      const key = [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-')
+      fs.writeFileSync(path.join(d, '预算账本.json'), JSON.stringify({ sessions: { s1: { days: { [key]: { models: { 'unpriced/model': { inputTokens: 1000000 } } } } } } }), 'utf8')
+      fs.writeFileSync(path.join(d, '价格.json'), JSON.stringify({ unpriced: { in: 100, cache: 0, out: 0 }, 'unpriced/model': { in: 2, cache: 0, out: 0 } }), 'utf8')
+    },
+    probe: d => fs.existsSync(path.join(d, '价格.json')),
+    expectCode: 1,
+    expectOutput: /合计 ≈ ¥2\.000[\s\S]*预警/,
+  },
+  {
+    name: '发现处置：空行不能充当逐条处置',
+    script: '_check_disposition.cjs',
+    inject: d => {
+      const f = path.join(d, '裁定记录.md')
+      fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/^\| \*\*R-1\*\* \|.*$/m, '| **R-1** | | | | |'), 'utf8')
+    },
+    probe: d => /^\| \*\*R-1\*\* \| \| \| \| \|$/m.test(fs.readFileSync(path.join(d, '裁定记录.md'), 'utf8')),
+    expectCode: 1,
+    expectOutput: /未逐条处置.*R-1/,
+  },
+  {
+    name: '发现处置：发现栏有字但处置栏为空仍应失败',
+    script: '_check_disposition.cjs',
+    inject: d => {
+      const f = path.join(d, '裁定记录.md')
+      fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/^\| \*\*R-1\*\* \|.*$/m,
+        '| **R-1** | 漏检率未定义统计域 | 已核对 | ✅ 采纳 | |'), 'utf8')
+    },
+    probe: d => /^\| \*\*R-1\*\* \| 漏检率未定义统计域 \| 已核对 \| ✅ 采纳 \| \|$/m.test(fs.readFileSync(path.join(d, '裁定记录.md'), 'utf8')),
+    expectCode: 1,
+    expectOutput: /未逐条处置.*R-1/,
+  },
+  {
+    name: '发现处置：仅发现栏有链接不能冒充核对证据',
+    script: '_check_disposition.cjs',
+    inject: d => {
+      const f = path.join(d, '裁定记录.md')
+      fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/^\| \*\*R-1\*\* \|.*$/m,
+        '| **R-1** | [发现](成品.md) | 核对无误 | ✅ 采纳 | 已处理 |'), 'utf8')
+    },
+    probe: d => /^\| \*\*R-1\*\* \| \[发现\]\(成品\.md\) \| 核对无误 \| ✅ 采纳 \| 已处理 \|$/m.test(fs.readFileSync(path.join(d, '裁定记录.md'), 'utf8')),
+    expectCode: 1,
+    expectOutput: /未逐条处置.*R-1/,
   },
   {
     name: '计数对账应该在"标称与实际的清单长度不符"时变红',
@@ -324,7 +467,7 @@ const CASES = [
     name: '记忆毕业应该在"有 active lesson 但五个桶全空"时变红',
     script: '_check_lesson_graduation.cjs',
     // ★ 这条正是独立核验 F-4 报的假绿：配额调成"恰好的数"就静音。
-    //   注意：它需要真建一个 SQLite（用 node:sqlite，Node ≥ 22.5）。
+    //   注意：它需要真建一个 SQLite（用 node:sqlite；22.x **从 22.13 起**才无需 `--experimental-sqlite`，本仓不加该开关）。
     inject: d => {
       const { DatabaseSync } = require('node:sqlite')
       const dbp = path.join(d, 'memory.db')
@@ -360,7 +503,7 @@ const CASES = [
     probeWhy: '确认库里真有 2 条 active lesson、且账本五个桶真的全空',
   },
   {
-    name: '文档漂移不应该因为"少配一个 declaration"就整项跳过（软依赖）',
+    name: '文档漂移：少配 declaration 仍应执行并检查必需文档',
     script: '_check_flow_sync.cjs',
     // ★ 2026-09-26 加：这是「步骤少」那一条的直接守卫。
     //   原来 declaration 被放在 requirePaths([...]) 里 —— 它是硬依赖 ⇒
@@ -372,13 +515,17 @@ const CASES = [
       const cfg = path.join(d, '_target.json')
       const j = JSON.parse(fs.readFileSync(cfg, 'utf8'))
       delete j.declaration
+      j.agentsDoc = j.flowDoc = j.capabilityFile = j.guide = '假文档.md'
       fs.writeFileSync(cfg, JSON.stringify(j, null, 2), 'utf8')
+      fs.writeFileSync(path.join(d, '假文档.md'), '# 故意不含治理规则\n', 'utf8')
     },
     probe: d => {
       const j = JSON.parse(fs.readFileSync(path.join(d, '_target.json'), 'utf8'))
       return !('declaration' in j)
     },
     probeWhy: '确认配置里真的没有 declaration（否则这个用例什么也没证明）',
+    expectCode: 2,
+    expectOutput: /治理规则/,
   },
   {
     // ★★ 这是**误报类**的第二条用例（机制在 2026-09-26 才支持这一类）：
@@ -401,22 +548,23 @@ const CASES = [
     probeWhy: '确认配置里真的没有 dispositionScanDirs（否则这个用例什么也没证明）',
   },
   {
-    // ★★ 第二条误报类：守**第 20 轮的成果** ——
-    //   把 `declaration` 从硬依赖降成软依赖之后，**少配它不该让整个「文档漂移」跳过**。
-    name: '文档漂移：少配 declaration 时不该整项跳过（那一块与它无关，跳过的只是那一块）',
+    // 必需文档没配置时，必须明确跳过，不能声称已经检查。
+    name: '文档漂移：缺少必需的 guide 应诚实跳过',
     script: '_check_flow_sync.cjs',
     expectOk: true,
     inject: d => {
       const cfg = path.join(d, '_target.json')
       const j = JSON.parse(fs.readFileSync(cfg, 'utf8'))
-      delete j.declaration
+      delete j.guide
       fs.writeFileSync(cfg, JSON.stringify(j, null, 2), 'utf8')
     },
     probe: d => {
       const j = JSON.parse(fs.readFileSync(path.join(d, '_target.json'), 'utf8'))
-      return !('declaration' in j)
+      return !('guide' in j)
     },
-    probeWhy: '确认配置里真的没有 declaration（否则这个用例什么也没证明）',
+    probeWhy: '确认配置里真的没有 guide（否则这个用例什么也没证明）',
+    expectCode: 3,
+    expectOutput: /未配置：guide/,
   },
   // ═══ 以下 6 条是 2026-09-26 第 23 轮加的：**把"误报类"从两个点扩成一条线**。
   //     起因：机制刚支持 `expectOk` 时只有 2 条用例。而"可选输入"这件事
@@ -521,6 +669,156 @@ const CASES = [
 
 ]
 
+CASES.push(
+  {
+    name: '处置列为空时，末尾备注不能冒充处置', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 处置 | 备注 |\n|---|---|---|', ['| **R-1** | | 有备注 |', '| **R-2** | 已修改 [证据](成品.md) | 无 |']),
+    expectOutput: /未逐条处置/,
+  },
+  {
+    name: '两列表格：编号与带证据的处置合法', script: '_check_disposition.cjs', expectCode: 0, expectOk: true,
+    inject: d => tableFixture(d, '| 编号 | 处置 |\n|---|---|', ['| **R-1** | 已修改 [证据](成品.md) |', '| **R-2** | 已修改 [证据](成品.md) |']),
+    expectOutput: /全部逐条有处置/,
+  },
+  {
+    name: '三列表格：我的核对中的证据与非空处置合法', script: '_check_disposition.cjs', expectCode: 0, expectOk: true,
+    inject: d => tableFixture(d, '| 编号 | 我的核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | 已改 |', '| **R-2** | [证据](成品.md) | 已改 |']),
+    expectOutput: /全部逐条有处置/,
+  },
+  {
+    name: '没有明确处置表头不能判为已处置', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 备注 |\n|---|---|', ['| **R-1** | 已修改 [证据](成品.md) |', '| **R-2** | 已修改 [证据](成品.md) |']),
+    expectOutput: /未逐条处置/,
+  },
+  {
+    name: '覆盖矩阵：范围外的未知扩展名文件必须报未覆盖', script: '_check_coverage.cjs', expectCode: 1,
+    inject: d => {
+      localScanFixture(d)
+      fs.mkdirSync(path.join(d, 'only'))
+      const p = path.join(d, '_target.json'), cfg = JSON.parse(fs.readFileSync(p, 'utf8'))
+      for (const key of ['publishTargets', 'scanDirs', 'textHygieneRoots', 'hygieneRoots', 'syntaxRoots', 'psRoots']) cfg[key] = ['only']
+      fs.writeFileSync(p, JSON.stringify(cfg, null, 2))
+      fs.writeFileSync(path.join(d, 'only', '正常.md'), '正常内容')
+      fs.writeFileSync(path.join(d, 'outside.xyz'), '未进入扫描范围')
+    }, expectOutput: /outside\.xyz/,
+  },
+  {
+    name: '覆盖矩阵：发布扫描范围内未知扩展名确实会被选中', script: '_check_coverage.cjs', expectCode: 0, expectOk: true,
+    inject: d => { localScanFixture(d); fs.writeFileSync(path.join(d, 'included.xyz'), '普通内容') },
+    expectOutput: /每个目标文件均进入/,
+  },
+  {
+    name: '发布闸门：只有 WARN 也不能自动放行', script: '_publish_audit.cjs', expectCode: 1,
+    inject: d => { localScanFixture(d); const sep = String.fromCharCode(92); fs.writeFileSync(path.join(d, '警告.md'), ['C:', 'Users', 'fixture', 'note'].join(sep)) },
+    expectOutput: /WARN 待人工逐条判读/,
+  },
+  {
+    name: '崩溃台账必须保留脚本名，堆栈不能成为命中规则', script: '_check_all.cjs', expectCode: 2,
+    scriptOf: d => path.join(d, 'checks', '_check_all.cjs'),
+    argsOf: d => ['--fast', '--target', path.join(d, '_target.json')],
+    inject: d => {
+      localScanFixture(d)
+      const checks = path.join(d, 'checks'); fs.mkdirSync(checks)
+      for (const file of fs.readdirSync(HERE)) if (file.endsWith('.cjs')) fs.copyFileSync(path.join(HERE, file), path.join(checks, file))
+      fs.writeFileSync(path.join(checks, '_check_conformance.cjs'), "throw new Error('fixture crash')\n")
+    },
+    verifyAfter: d => {
+      const file = path.join(d, 'checks', '_拦截台账.jsonl')
+      if (!fs.existsSync(file)) return false
+      const entry = JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop())
+      return entry.bad.includes('_check_conformance.cjs=2') && entry.rules.every(rule => !/^as\s/.test(rule))
+    }, expectOutput: /这一项崩了/,
+  },
+)
+CASES.push(
+  {
+    name: '处置占位文字添加句号后仍须拦截', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | 待逐条补证据。 |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /未逐条处置/,
+  },
+  {
+    name: '待补证据不能作为完成处置', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | 待补证据 |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /未逐条处置/,
+  },
+  // ★ 2026-10-02（T7 第 4 轮 R4-F01）：**占位词加装饰字符**这一族。
+  //   上面两条只考"裸词"和"后缀标点"，而独立复核证明：**前缀/包裹形态全部绕过**（假绿）。
+  //   ⇒ 这一组把该族补齐；最后一条是**反方向**的用例（合法的括号内容必须继续放行）——
+  //     两个方向都测过，才算"改判据"而不是"把判据改紧"。
+  {
+    name: '圆括号包裹的占位词仍须拦截（(TODO)）', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | (TODO) |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /未逐条处置/,
+  },
+  {
+    name: '全角括号包裹的占位词仍须拦截（（待补证据））', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | （待补证据） |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /未逐条处置/,
+  },
+  {
+    name: '反引号包裹的占位词仍须拦截（`TODO`）', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | `TODO` |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /未逐条处置/,
+  },
+  {
+    name: '破折号前缀的占位词仍须拦截（——待补证据）', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | ——待补证据 |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /未逐条处置/,
+  },
+  {
+    name: '表情前缀的占位词仍须拦截（⏳待补证据）', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | ⏳待补证据 |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /未逐条处置/,
+  },
+  {
+    name: '常见的占位同义变体也须拦截（尚未处置）', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | 尚未处置 |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /未逐条处置/,
+  },
+  {
+    name: '★ 反方向：合法的括号内容必须继续放行（不能把对的判成错的）', script: '_check_disposition.cjs', expectCode: 0, expectOk: true,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | 已完成（见 成品.md） |', '| **R-2** | [证据](成品.md) | （已改，[证据](成品.md)） |']), expectOutput: /全部逐条有处置/,
+  },
+  // ★ 2026-10-02（T7 第 5 轮 F-01）：**分隔符必须保留**这一族 —— 上一版把标点/空白全删，
+  //   于是 `TODO list` 变成 `TODOlist`、被词边界放行。下面两条一正一反钉住它。
+  {
+    name: '占位词后跟 ASCII 词仍须拦截（TODO list）', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | TODO list |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /未逐条处置/,
+  },
+  {
+    name: '★ 反方向：以占位词字母开头的长词不能误伤（TODOLIST 已归档）', script: '_check_disposition.cjs', expectCode: 0, expectOk: true,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | TODOLIST 已归档 |', '| **R-2** | [证据](成品.md) | 已改 |']), expectOutput: /全部逐条有处置/,
+  },
+  {
+    name: '连续表格不能沿用上一张表的处置表头', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => tableFixture(d, '| 编号 | 核对 | 处置 |\n|---|---|---|', ['| **R-1** | [证据](成品.md) | 已改 |', '', '| 编号 | 说明 | 备注 |', '|---|---|---|', '| **R-2** | [证据](成品.md) | 遗留 |']), expectOutput: /未逐条处置/,
+  },
+  {
+    name: '编号中的点必须按字面匹配，不能冒充连字符', script: '_check_disposition.cjs', expectCode: 1,
+    inject: d => {
+      fs.writeFileSync(path.join(d, '核验报告.md'), '### R.1 ｜ 问题\n')
+      const p = path.join(d, '处置清单.json'), cfg = JSON.parse(fs.readFileSync(p, 'utf8'))
+      cfg.tracks[0].idPattern = '^###\\s+(R\\.\\d+)\\s*｜'; fs.writeFileSync(p, JSON.stringify(cfg, null, 2))
+      tableFixture(d, '| 编号 | 处置 |\n|---|---|', ['| **R-1** | 已修改 [证据](成品.md) |'])
+    }, expectOutput: /未逐条处置/,
+  },
+  {
+    name: '统一入口必须展示孤儿报告子检查未运行', script: '_check_all.cjs', expectCode: 0, expectOk: true,
+    scriptOf: d => path.join(d, 'checks', '_check_all.cjs'), argsOf: d => ['--fast', '--target', path.join(d, '_target.json')],
+    inject: d => {
+      localScanFixture(d); copyCheckFixture(d)
+      const p = path.join(d, '_target.json'), cfg = JSON.parse(fs.readFileSync(p, 'utf8'))
+      delete cfg.dispositionScanDirs; delete cfg.syntaxRoots
+      cfg.publishTargets = ['成品.md']; fs.writeFileSync(p, JSON.stringify(cfg, null, 2))
+    }, expectOutput: /未配置 dispositionScanDirs ⇒ 跳过/,
+  },
+  {
+    name: '公开发布辅助脚本须明示源与产物映射未生效', script: '_publish.cjs', expectCode: 0, expectOk: true,
+    scriptOf: d => path.join(d, 'checks', '_publish.cjs'), argsOf: () => ['--dry-run', '--msg', 'fixture'],
+    inject: d => { copyCheckFixture(d); execFileSync('git', ['init', '-q', '-b', 'master', d], { stdio: 'ignore' }) },
+    expectOutput: /生成物陈旧检查未执行/,
+    verifyAfter: d => !fs.existsSync(path.join(d, '.git', 'index')),
+  },
+  {
+    name: '非 master 分支必须在任何提交动作之前退出', script: '_publish.cjs', expectCode: 2,
+    scriptOf: d => path.join(d, 'checks', '_publish.cjs'), argsOf: () => ['--msg', 'fixture'],
+    inject: d => { copyCheckFixture(d); execFileSync('git', ['init', '-q', '-b', 'main', d], { stdio: 'ignore' }) },
+    expectOutput: /未执行暂存、提交或推送/,
+    verifyAfter: d => !fs.existsSync(path.join(d, '.git', 'index')),
+  },
+)
 const results = []
 for (const c of CASES) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'selftest-'))
@@ -537,8 +835,8 @@ for (const c of CASES) {
   try {
     // ★★ 2026-09-26 加：支持 `argsOf` —— 有些用例考的是**参数解析**（例如「--target 给了却没值」），
     //   它们不改任何文件，所以需要能自己决定命令行参数。
-    const ARGS = typeof c.argsOf === 'function' ? c.argsOf() : ['--target', path.join(dir, '_target.json')]
-    execFileSync(process.execPath, [path.join(HERE, c.script), ...ARGS],
+    const ARGS = typeof c.argsOf === 'function' ? c.argsOf(dir) : ['--target', path.join(dir, '_target.json')]
+    execFileSync(process.execPath, [c.scriptOf ? c.scriptOf(dir) : path.join(HERE, c.script), ...ARGS],
       { encoding: 'utf8', stdio: ['ignore', fd, fd] })
     code = 0
   } catch (e) {
@@ -550,7 +848,7 @@ for (const c of CASES) {
   fs.rmSync(logPath, { force: true })
   // ★ **先回读确认扰动真的生效**，再删临时目录（本工作区已付过学费：扰动没生效时，
   //   "断言没变红"会被误读成"断言是装饰" —— 实测第一次就是这么误判的）。
-  const probeOk = c.probe ? c.probe(dir) : true
+  const probeOk = (c.probe ? c.probe(dir) : true) && (c.verifyAfter ? c.verifyAfter(dir, out) : true)
   fs.rmSync(tmp, { recursive: true, force: true })
   // ★ 「读不到退出码也要判失败」—— 扫了个空 ≠ 干净。且**扰动没生效就不算证明过**。
   // ★★★ 2026-09-26 加：**支持两类契约**（此前只支持一类）。
@@ -567,9 +865,11 @@ for (const c of CASES) {
   //   · 2 = 结构性错误  ⇒ ★ 这也是真问题（例如缺键就崩）
   //   · 3 = 未配置跳过  ⇒ ✅ 合法（"没查"≠"报错"；本仓库的纪律是"跳过要显式显示"，不是"不许跳过"）
   //   ⇒ 所以 `expectOk` 的判据是「**没报红**」（0 或 3），不是「必须 0」。
-  const isOk = c.expectOk ? (code === 0 || code === 3) : (code !== 0)
-  const bit = isOk && probeOk
-  results.push({ name: c.name, script: c.script, code, bit, valid: probeOk, why: c.probeWhy, expectOk: !!c.expectOk, head: out.split('\n').filter(Boolean).slice(-1)[0] || '' })
+  const isOk = c.expectCode !== undefined ? code === c.expectCode
+    : c.expectOk ? (code === 0 || code === 3) : (code === 1 || code === 2 || code === 4)
+  const outputOk = !c.expectOutput || c.expectOutput.test(out)
+  const bit = isOk && outputOk && probeOk
+  results.push({ name: c.name, script: c.script, code, bit, valid: probeOk, why: c.probeWhy, expectOk: !!c.expectOk, head: out.split('\n').filter(Boolean).slice(-1)[0] || '', detail: out })
 }
 
 console.log('=== 反例自检：注入已知缺陷，**要求断言必须变红** ===')
@@ -583,6 +883,7 @@ for (const r of results) {
   console.log('            ' + r.script + ' → 退出码 ' + r.code + (r.head ? ' ｜ ' + r.head.slice(0, 70) : ''))
   if (!r.bit) {
     bad++
+    console.log(r.detail.split('\n').filter(Boolean).slice(-35).map(line => '            ' + line).join('\n'))
     if (!r.valid) console.log('            ⚠️ **扰动没生效**（' + (r.why || '') + '）⇒ 这个用例什么也没证明 —— 先修用例，别急着改断言')
   }
 }
@@ -625,6 +926,7 @@ console.log('   （强度说明：本自检证明的是"**这些断言会失败*
 //     它们一律 `⏭️ 跳过 + exit 3`，没有"会咬人"这回事。把这类**显式标出来**，
 //     而不是让它混在"从没被注入过缺陷"的名单里吓人。
 const PLACEHOLDER = new Set(['_check_provider_config.cjs', '_check_verify_profile.cjs'])
+if (fs.readFileSync(path.join(HERE, '_refresh_snapshots.cjs'), 'utf8').includes('本子集的占位实现')) PLACEHOLDER.add('_refresh_snapshots.cjs')
 const covered = [...new Set(CASES.map(c => c.script))].filter(s => all.includes(s))
     const missing = all.filter(s => !covered.includes(s) && !PLACEHOLDER.has(s))
     const placeholders = all.filter(s => PLACEHOLDER.has(s))

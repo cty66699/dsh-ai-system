@@ -47,6 +47,7 @@ const SKIP = name => name.startsWith('.') || name === 'node_modules' || /^_归�
 const ESM_RE = /^[ \t]*(?:import|export)\b/m
 
 const bad = [], esm = [], pipeHits = []
+const selectedFiles = []
 let nScanned = 0, nEsm = 0
 
 // S-2 判据：`stdio` 的值是 'pipe'，或数组里含 'pipe'。
@@ -110,6 +111,8 @@ function stripComments(src) {
 function check(p) {
   let src
   try { src = fs.readFileSync(p, 'utf8') } catch { return }
+  selectedFiles.push(p)
+  if (process.argv.includes('--list-files')) return
   src = src.replace(/^\uFEFF/, '')
   nScanned++
   // ── S-2：先查写法（它对 ESM 同样适用，不受下面的 ESM 跳过影响）──
@@ -167,6 +170,7 @@ if (_CFG && _CFG.t && _CFG.t.repoRoot) {
   } catch { /* 忽略 */ }
 }
 
+require('./_paths.cjs').emitFileList(selectedFiles)
 if (nScanned - nEsm === 0) {
   // ★★ 2026-09-26 修（独立核验 F-8）：原来判 `nScanned === 0`，而 `nScanned++` **把 ESM 也算了进去**
   //   ⇒ 一个**全是 ESM** 的扫描根 ⇒ 编译 0 个却 nScanned === 1 ⇒ 守卫失效 ⇒ 报「✅ 全部可编译」。

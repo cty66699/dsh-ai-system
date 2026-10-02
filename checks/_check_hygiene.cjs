@@ -71,6 +71,7 @@ const dec = new TextDecoder('utf-8', { fatal: true })
 
 const findings = []
 let nFiles = 0, nPs1 = 0, nText = 0, nSkippedBig = 0
+const selectedFiles = []
 const archives = []
 
 function walk(dir) {
@@ -88,6 +89,7 @@ function walk(dir) {
     const ext = path.extname(e.name).toLowerCase()
     let size = 0
     try { size = fs.statSync(p).size } catch { continue }
+    if ((ext === '.ps1' || TEXT_EXT.has(ext)) && size <= MAX_BYTES) selectedFiles.push(p)
 
     // ── H-1：`.ps1` 含非 ASCII 就必须带 UTF-8 BOM ──────────────────────────
     if (ext === '.ps1') {
@@ -154,6 +156,7 @@ for (const r of ROOTS) {
 
 // ★「扫了个空 ≠ 干净」—— 一个文件都没扫到就必须判失败，不能报 ✅。
 //   （这是本册第五种假通过形态，见 lesson 0mufbaad7：`_publish_audit` 曾在空目录里报"通过"。）
+require('./_paths.cjs').emitFileList(selectedFiles)
 if (nPs1 + nText === 0) {
   // ★★ 2026-09-26 修（独立核验 F-10 —— 一个假绿）：
   //   原来判 `nFiles === 0`，而 `nFiles++` **对每个文件都加**（包括 png 这类二进制与无关扩展名）。

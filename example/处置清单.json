@@ -14,6 +14,7 @@
       "source": "核验报告.md",
       "idPattern": "^#{3}\\s+(R-\\d+)\\s*｜",
       "ledger": "裁定记录.md",
+      "requireEvidenceLink": true,
       "dispositionPattern": "^\\|\\s*\\*\\*{ID}\\*\\*\\s*\\|"
     }
   ],

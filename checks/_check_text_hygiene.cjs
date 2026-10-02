@@ -213,6 +213,10 @@ function checkJsSyntax(files) {
 const t0 = Date.now()
 // ★ 改成遍历全部扫描根（原来只扫第一个）
 const files = [...new Set(ALL_ROOTS.flatMap(r => walk(r)))]
+require('./_paths.cjs').emitFileList(files.filter(file => {
+  const ext = path.extname(file).toLowerCase()
+  return (MUST_NOT_HAVE_BOM.has(ext) || MUST_NOT_HAVE_BOM_NAMES.has(path.basename(file)) || ext === '.ps1') && fs.statSync(file).size <= MAX_SIZE
+}))
 checkBom(files); checkPsQuotes(files); checkWrongComment(files); checkGeneratedFreshness()
 checkFullWidth(files); checkMixedEol(files); checkJsSyntax(files)
 

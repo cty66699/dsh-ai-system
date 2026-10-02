@@ -15,7 +15,7 @@
   "verifyBase": ".",
   "_scanDirsNote": "★ 2026-09-25 修（Kimi 第二轮 B4）：原来只写 [\".\"] ⇒ **`docs/` 从来没被引用检查扫过**，于是那里面 5 处死引用（指向内部名/不存在的文件）一直没人发现。扫描范围必须覆盖**所有会被读者读的目录**，不能只覆盖示例。",
   "scanDirs": [".","../docs"],
-  "textHygieneRoots": [".","../docs"],
+  "textHygieneRoots": [".."],
   "_syntaxRootsNote": "★ 2026-09-26 加（`../deploy` 而不是 `deploy` —— **相对路径以本文件所在目录为基准**，写到 example/deploy 会「扫描根不存在」）：此前**没配它** ⇒ 两道语法门（语法门 / PS 语法门）在示例工程里**从来没真跑过** —— 那是个覆盖缺口。现在配上，示例就能演练到它们（本仓库自带 checks/*.cjs 与 deploy/install.ps1）。",
   "syntaxRoots": ["../checks","../deploy"],
   "publishTargets": [".."],

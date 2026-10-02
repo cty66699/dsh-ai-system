@@ -51,6 +51,7 @@ function walk(dir, out = []) {
 }
 
 const files = [...new Set(SCAN.flatMap(d => walk(d)))]
+require('./_paths.cjs').emitFileList(files)
 const bad = []
 let ok = 0
 for (const f of files) {

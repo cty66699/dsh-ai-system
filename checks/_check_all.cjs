@@ -56,7 +56,7 @@ const fast = process.argv.includes('--fast')
     console.log('用法: node _check_all.cjs [--fast] [--target <配置文件>]')
     console.log('')
     console.log('  --fast              跳过慢的或需要联网的检查（只读断言 / 访客视角 / 快照复查）')
-    console.log('  --target <文件>     用指定的目标配置（不传则用本仓库默认布局）')
+    console.log('  --target <文件>     用指定的目标配置（不传则使用本安装的默认目标；公开仓为示例）')
     console.log('')
     console.log('  ⚠️ **参数拼错会直接报错**，不会静默回落到示例工程 ——')
     console.log('     因为"回落 + 报绿"会让 CI 永远绿灯（这是实测踩过的坑）。')
@@ -104,7 +104,10 @@ const CHECKS = [
   //   原来它只在 `=== null` 时派生一个「跳过」标记，**配置了路径也不生效**（脚本自己写死读 HOME）。
   //   用命名参数 `--ledger`，避免与统一入口透传的 `--target <路径>` 抢位置参数。
   ['预算闸门', '_budget_check.cjs',
-    (_CFG.t.budgetLedger ? ['--ledger', _CFG.t.budgetLedger] : []), false],
+    [
+      ...(_CFG.t.budgetLedger ? ['--ledger', _CFG.t.budgetLedger] : []),
+      ...(_CFG.t.budgetPrices ? ['--prices', _CFG.t.budgetPrices] : []),
+    ], false],
   ['引用检查', '_check_refs.cjs', [], false],
   ['发布闸门', '_publish_audit.cjs', [], false],
   ['目录符合性', '_check_conformance.cjs', [], false],
@@ -253,7 +256,7 @@ for (const [name, script, args, needsNet, skip] of CHECKS) {
   try { out = fs.readFileSync(logFile, 'utf8') } catch { /* 忽略 */ }
   if (code === 'SPAWN-FAIL') {
     console.log('❌ 无法启动（' + spawnErr + '）—— **这不是"有发现"，这是这一项根本没跑**')
-    results.push({ name, code: 2, out: '', spawnFail: true })
+    results.push({ name, script, code: 2, out: '', spawnFail: true })
     continue
   }
   // ★ 退出码 3 = **未配置 ⇒ 跳过**（自定义目标模式下不回落默认布局）。
@@ -279,13 +282,20 @@ for (const [name, script, args, needsNet, skip] of CHECKS) {
       console.log('   ⇒ 检查器根本没跑起来，所以下面任何"结论"都不成立。')
       console.log('   ⇒ 常见原因：配置里指向的目标文件不存在 / 格式不对。')
       console.log('     （这是**结构性错误**，不是"你的项目有问题"—— 别去自己项目里找发现。）')
-      results.push({ name, code: 2, crashed: true, out })
+      results.push({ name, script, code: 2, crashed: true, out })
       continue
     }
   }
   const tail = out.trim().split(/\r?\n/).filter(l => l.trim()).slice(-1)[0] || ''
   console.log(code === 0 ? '✅ 通过' : (code === 1 ? '⚠️ 有发现（退出码 1）' : '❌ 失败（退出码 ' + code + '）'))
   if (tail) console.log('     ' + tail.slice(0, 160))
+  // 子检查跳过和范围限制不能被“整项退出 0”的摘要吞掉。
+  for (const line of out.split(/\r?\n/).filter(line => /^\s*(?:⏭️|⚠️)/.test(line) && /未配置|未包含实现|没查成|没查|跳过/.test(line))) {
+    if (line.trim() !== tail.trim()) console.log('     ' + line.trim())
+  }
+  if (script === '_publish_audit.cjs' && code !== 0) {
+    for (const line of out.split(/\r?\n/).filter(line => /^(?:❌ |⚠️ |\s+(?:BLOCK|WARN):|BLOCK 命中)/.test(line))) console.log('     ' + line)
+  }
   results.push({ name, code, out, script })
 }
 
@@ -309,7 +319,7 @@ if (bad.length) {
   console.log('')
   console.log('⚠️ 未通过的检查：' + bad.filter(b => !b.spawnFail).map(b => b.name).join('、') || '（无）')
   console.log('   ⚠️ 逐项判读（退出码含义不同，不能一概而论）：')
-  console.log('      · `预算闸门` 0=正常 / **1=预警（未到熔断）** / **2=熔断（禁止对外派发）**')
+  console.log('      · `预算闸门` 0=正常 / **1=预警或输入错误** / **2=熔断** / **3=跳过** / **4=金额未知（禁止自动派发）**')
   console.log('      · `引用检查` / `发布闸门` / `目录符合性` 退出码 1 表示**确有发现，必须处理或书面说明**')
   console.log('      · `发现处置链路` 退出码 1 = **有发现未逐条处置**（治理规则第 4 条要求必采纳或书面说明不采纳）')
 }
@@ -341,13 +351,14 @@ if (bad.length) {
 const RULE_RE = /\[([\u4e00-\u9fa5A-Za-z0-9][\u4e00-\u9fa5A-Za-z0-9 _\-]{1,15})\]|【([^】]{2,16})】/g
 const rulesThisRun = new Set()
 for (const r of bad) {
-  if (r.spawnFail || !r.out) continue
+  if (r.spawnFail || r.crashed || !r.out) continue
   for (const m of String(r.out).matchAll(RULE_RE)) {
     const tag = (m[1] || m[2] || '').trim()
-    if (tag) rulesThisRun.add(tag)
+    if (tag && !/^as\s/i.test(tag)) rulesThisRun.add(tag)
   }
 }
 let seenBefore = new Set()
+const LEDGER = path.join(HERE, '_拦截台账.jsonl')
 try {
   if (fs.existsSync(LEDGER)) {
     for (const line of fs.readFileSync(LEDGER, 'utf8').split('\n').filter(Boolean)) {
@@ -356,7 +367,6 @@ try {
   }
 } catch { /* 读不到历史就当"没见过的"——宁可多报首次，也不要漏报 */ }
 const firstTime = [...rulesThisRun].filter(t => !seenBefore.has(t))
-const LEDGER = path.join(HERE, '_拦截台账.jsonl')
 if (bad.length) {
   try {
     fs.appendFileSync(LEDGER, JSON.stringify({
@@ -364,7 +374,7 @@ if (bad.length) {
       // ★ 记的是**脚本名**（不是中文项名）—— 这样它才能和 `_selftest.cjs` 里那份
       //   「断言清单」（从本文件源码里抠出来的文件名）对上。
       //   踩过：第一版记的是项名，于是摘要里把所有项都算成「从没拦到过」（两套名字对不上）。
-      bad: bad.filter(b => !b.spawnFail).map(b => (b.script || b.name) + '=' + b.code),
+      bad: bad.filter(b => !b.spawnFail).map(b => b.script + '=' + b.code),
       // ★ 规则级（第 45 轮加）：本次命中的规则标签 + **本次首次出现**的那些。
       rules: [...rulesThisRun],
       firstTime: firstTime,
@@ -377,4 +387,4 @@ if (firstTime.length) {
   console.log('   （记进台账了。想知道每条规则的首次触发，查 `_拦截台账.jsonl` 的 firstTime 字段。）')
 }
 }
-process.exit(bad.length ? 1 : 0)
+process.exit(bad.some(r => r.code === 2 || r.spawnFail) ? 2 : bad.length ? 1 : 0)

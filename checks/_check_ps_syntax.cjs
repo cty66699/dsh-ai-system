@@ -80,6 +80,7 @@ function walk(dir) {
   }
 }
 for (const r of ROOTS) walk(r)
+require('./_paths.cjs').emitFileList(files)
 
 if (!files.length) {
   // ★★ 2026-09-26 修（独立核验 F-2）：扫到 0 个目标 ⇒ **结构性错误**，不是「干净」。

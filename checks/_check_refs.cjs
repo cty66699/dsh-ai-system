@@ -56,6 +56,7 @@ const EVIDENCE_FILES = [/^T7对抗性推演_.*\.md$/, /^第三轨道_.*\.md$/, /
   /^T[56].*\.md$/, /^事实核查_.*\.md$/, /^推导复核_.*\.md$/, /^规程核验_.*\.md$/, /^裁定复核_.*\.md$/]
 const isEvidence = p => EVIDENCE_FILES.some(re => re.test(path.basename(p)))
 const files = [...new Set(SCAN_DIRS.flatMap(d => walk(d)))]
+require('./_paths.cjs').emitFileList(files)
 // ★ 扫了个空 ≠ 干净：「0 个文件里没有悬空引用」是句废话。
 //   实测（2026-09-24）：干净副本里本项曾因为目标没透传、扫到 0 个文件而报 ✅。
 if (files.length === 0) {

@@ -51,8 +51,9 @@ if (TARGETS.length === 0) {
   process.exit(2)
 }
 
-// ── 哈希（跳过 .git / node_modules / 生成物目录 / 临时目录）
-const SKIP = name => name === '.git' || name === 'node_modules' || name.startsWith('.build-') || name.startsWith('.gitkeep-')
+// ── 哈希（跳过版本库、依赖、生成物，以及检查器自己的运行台账）
+// 统一入口遇到红灯会追加 _拦截台账.jsonl；那是检查器的运行记录，不能算作目标工程被改动。
+const SKIP = name => name === '.git' || name === 'node_modules' || name === '_拦截台账.jsonl' || name.startsWith('.build-') || name.startsWith('.gitkeep-')
 function hashOne(p, out, n) {
   let st
   try { st = fs.statSync(p) } catch { return }
@@ -86,6 +87,7 @@ console.log('=== 「只读」断言：跑完检查后，被检查的工程是否
 console.log('检查对象（' + TARGETS.length + ' 个，来自配置）：')
 for (const p of TARGETS) console.log('   · ' + (path.relative(_C.ROOT, p) || '.'))
 console.log('  ★ 范围只到这些 —— 检查对象以外的文件不在本项覆盖内（那不代表检查不会写它们）。')
+console.log('  ★ 检查器自身的 _拦截台账.jsonl 不计入目标文件哈希；它会在红灯时按设计追加。')
 console.log('  ★ **已知弱点（如实写在输出里）**：若这些目录里**同时有别的东西在活动**')
 console.log('     （浏览器 profile、别的会话、后台任务），它们改动的文件**也会被算成"被改动了"** ——')
 console.log('     实测踩过一次（命中的是另一个会话的 Chrome 写的 History-journal）。')

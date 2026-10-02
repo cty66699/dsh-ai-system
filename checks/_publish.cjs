@@ -79,6 +79,13 @@ const git = (args) => {
 
 console.log('▶ 发布（提交 + 推送；**提交信息由人写**）')
 console.log('  仓库：' + REPO)
+console.log('  分支范围：本发布辅助脚本仅支持 origin/master；其他分支请使用原生 git 提交、推送。')
+const currentBranch = git(['symbolic-ref', '--quiet', '--short', 'HEAD'])
+if (currentBranch.code !== 0 || currentBranch.out !== 'master') {
+  console.log('❌ 本辅助脚本仅支持 master 分支；未执行暂存、提交或推送。')
+  fs.rmSync(TMP, { recursive: true, force: true })
+  process.exit(2)
+}
 console.log('')
 
 // ── ★★ 第 61 轮加：**先看"改了源忘了生成"没有** ──────────────────────────────
@@ -92,7 +99,9 @@ console.log('')
 //   ★ 只**提醒**、不**拦住**：合法场景是存在的（例如"我只想提交已经生成的产物"）。
 {
   const hygiene = path.join(HERE, '_check_text_hygiene.cjs')
-  if (fs.existsSync(hygiene)) {
+  if (!fs.existsSync(path.join(HERE, '_public_map.json'))) {
+    console.log('  ⏭️ 生成物陈旧检查未执行：缺少源与产物映射；公开子集不含生成器，该保障不适用。')
+  } else if (fs.existsSync(hygiene)) {
     const log = path.join(TMP, 'stale.txt')
     const fd = fs.openSync(log, 'w')
     let code = 0
@@ -117,6 +126,35 @@ console.log('')
       console.log('')
     }
     try { fs.rmSync(log, { force: true }) } catch { /* 忽略 */ }
+  }
+}
+
+// ── ★★ 2026-10-02 加（T7 第 4 轮 R4-T6-R01）：**「未含实现」的项也要在发布入口里说清** ──
+//   上一轮的争议正在这里：`保障清单` 写着「快照复查未含实现、显式跳过」，
+//   而发布入口只对「源 → 产物映射」说了「未执行」 ⇒ **同类里的另一项没人提**，
+//   读者会以为"两处都管了"。⇒ 本节把同一句话补到**发布路径**上。
+//   ★ 判据**从源码派生**：占位实现自己在文件开头就写着 `本子集的占位实现` 这句标记 ——
+//     **不在这里另写一份名单**（那会立刻变成又一份会漂移的清单）。
+//   ★★ 但判据要看**文件开头**，不能全文件搜 —— 第一版就是全文件 `includes`，
+//     于是它把**把这句话当字符串写进代码的脚本**（`_selftest.cjs` 的判据、本文件自己）
+//     也算成了"未含实现"。⇒ 这是本工作区记过四次的那个形态：
+//     **新加的检查，先暴露的是它自己的范围问题**（该查的没查 ⇒ 假绿；不该查的查了 ⇒ 误报）。
+//     占位实现的第一行就是那句标记，而"引文"不会出现在开头 400 字符里。
+//   ★ 在工作区源形态下（占位文件被真实现替换）本节不会列出任何东西 —— 那是正常的：
+//     它只在**公开子集**里说话。
+//   ★ 只打印、不拦：这一条描述的是"这份子集缺哪些保障"，与"这次该不该提交"无关。
+{
+  const MARK = '本子集的占位实现'
+  const placeholders = []
+  for (const f of fs.readdirSync(HERE)) {
+    if (!f.endsWith('.cjs') || f === path.basename(__filename)) continue
+    try { if (fs.readFileSync(path.join(HERE, f), 'utf8').slice(0, 400).includes(MARK)) placeholders.push(f) } catch { /* 读不了就跳过 */ }
+  }
+  if (placeholders.length) {
+    console.log('  ⏭️ 本子集**未含实现**的检查 ' + placeholders.length + ' 项：' + placeholders.join('、'))
+    console.log('     ⇒ 它们**不提供保障**（运行时会明确跳过），**不是"通过"**。')
+    console.log('     ⇒ 别把「这一项没有实现」读成「这一项没问题」—— 细节见 `保障清单.md`。')
+    console.log('')
   }
 }
 
